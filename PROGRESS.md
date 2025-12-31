@@ -898,7 +898,10 @@ if (outputFile || errorFile) {
 
 **Key Points**:
 - Parse both `>` (or `1>`) and `2>` operators
-- Open file descriptors for both if specified
+- For builtins: Create errorFile even if empty (to match shell behavior)
+  - Most builtins don't produce stderr, but file should still exist
+  - Example: `echo hello 2> err.txt` creates empty err.txt
+- For external programs: Open file descriptors for both if specified
 - Use `'inherit'` for streams that aren't redirected
 - `stdio: ['inherit', stdoutFd, stderrFd]` sets stdin, stdout, stderr independently
 - Close all opened file descriptors after command completes

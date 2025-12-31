@@ -70,40 +70,72 @@ function parseCommand(commandLine) {
   
   // Parse redirection operators
   let outputFile = null;
+  let outputAppend = false;
   let errorFile = null;
+  let errorAppend = false;
   const filteredArgs = [];
   
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     
-    // Check for > or 1> redirection (stdout)
-    if (arg === '>' || arg === '1>') {
-      // Next argument is the output file
+    // Check for >> or 1>> redirection (stdout append)
+    if (arg === '>>' || arg === '1>>') {
       if (i + 1 < args.length) {
         outputFile = args[i + 1];
+        outputAppend = true;
+        i++; // Skip the filename
+      }
+    } else if (arg === '2>>') {
+      // stderr append
+      if (i + 1 < args.length) {
+        errorFile = args[i + 1];
+        errorAppend = true;
+        i++; // Skip the filename
+      }
+    } else if (arg.startsWith('1>>')) {
+      // Handle "1>>file" (no space)
+      outputFile = arg.slice(3);
+      outputAppend = true;
+    } else if (arg.startsWith('2>>')) {
+      // Handle "2>>file" (no space)
+      errorFile = arg.slice(3);
+      errorAppend = true;
+    } else if (arg.startsWith('>>')) {
+      // Handle ">>file" (no space)
+      outputFile = arg.slice(2);
+      outputAppend = true;
+    } else if (arg === '>' || arg === '1>') {
+      // Next argument is the output file (overwrite)
+      if (i + 1 < args.length) {
+        outputFile = args[i + 1];
+        outputAppend = false;
         i++; // Skip the filename
       }
     } else if (arg === '2>') {
-      // Next argument is the error file (stderr)
+      // Next argument is the error file (stderr, overwrite)
       if (i + 1 < args.length) {
         errorFile = args[i + 1];
+        errorAppend = false;
         i++; // Skip the filename
       }
     } else if (arg.startsWith('2>')) {
       // Handle "2>file" (no space)
       errorFile = arg.slice(2);
+      errorAppend = false;
     } else if (arg.startsWith('1>')) {
       // Handle "1>file" (no space)
       outputFile = arg.slice(2);
+      outputAppend = false;
     } else if (arg.startsWith('>') && !arg.startsWith('>>')) {
       // Handle ">file" (no space)
       outputFile = arg.slice(1);
+      outputAppend = false;
     } else {
       filteredArgs.push(arg);
     }
   }
   
-  return { args: filteredArgs, outputFile, errorFile };
+  return { args: filteredArgs, outputFile, outputAppend, errorFile, errorAppend };
 }
 
 // Helper function to find executable in PATH
@@ -135,7 +167,9 @@ function repl() {
     const parsed = parseCommand(command);
     const args = parsed.args;
     const outputFile = parsed.outputFile;
+    const outputAppend = parsed.outputAppend;
     const errorFile = parsed.errorFile;
+    const errorAppend = parsed.errorAppend;
     
     if (args.length === 0) {
       repl();
@@ -153,15 +187,27 @@ function repl() {
     // Helper function to write output (to file or console)
     const writeOutput = (text) => {
       if (outputFile) {
-        fs.writeFileSync(outputFile, text + '\n');
+        if (outputAppend) {
+          fs.appendFileSync(outputFile, text + '\n');
+        } else {
+          fs.writeFileSync(outputFile, text + '\n');
+        }
       } else {
         console.log(text);
       }
     };
     
-    // Create error file if specified (even if empty for builtins)
+    // Create/append error file if specified (even if empty for builtins)
     if (errorFile) {
-      fs.writeFileSync(errorFile, '');
+      if (errorAppend) {
+        // Create if doesn't exist, don't modify if exists
+        if (!fs.existsSync(errorFile)) {
+          fs.writeFileSync(errorFile, '');
+        }
+      } else {
+        // Overwrite with empty
+        fs.writeFileSync(errorFile, '');
+      }
     }
     
     // Handle echo builtin
@@ -230,8 +276,8 @@ function repl() {
       
       // Handle I/O redirection
       if (outputFile || errorFile) {
-        const stdoutFd = outputFile ? fs.openSync(outputFile, 'w') : 'inherit';
-        const stderrFd = errorFile ? fs.openSync(errorFile, 'w') : 'inherit';
+        const stdoutFd = outputFile ? fs.openSync(outputFile, outputAppend ? 'a' : 'w') : 'inherit';
+        const stderrFd = errorFile ? fs.openSync(errorFile, errorAppend ? 'a' : 'w') : 'inherit';
         spawnOptions.stdio = ['inherit', stdoutFd, stderrFd]; // stdin, stdout, stderr
         
         spawnSync(executablePath, cmdArgs, spawnOptions);
