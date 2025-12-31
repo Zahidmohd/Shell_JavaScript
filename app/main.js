@@ -55,7 +55,8 @@ function completer(line) {
   
   // If there's exactly one match, add a space at the end
   if (hits.length === 1) {
-    return [[hits[0] + ' '], line];
+    const completion = hits[0] + ' ';
+    return [[completion], line];
   }
   
   // If no matches, ring a bell
