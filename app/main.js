@@ -13,6 +13,11 @@ function completer(line) {
     return [[hits[0] + ' '], line];
   }
   
+  // If no matches, ring a bell
+  if (hits.length === 0) {
+    process.stdout.write('\x07');
+  }
+  
   // Show all hits if multiple matches or no match
   return [hits, line];
 }
