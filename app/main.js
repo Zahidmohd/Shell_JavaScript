@@ -294,6 +294,24 @@ function executeBuiltin(cmd, cmdArgs) {
     }
     return `${arg}: not found\n`;
   } else if (cmd === 'history') {
+    // Check for -r flag (read from file)
+    if (cmdArgs[0] === '-r' && cmdArgs[1]) {
+      const filePath = cmdArgs[1];
+      try {
+        const fileContent = fs.readFileSync(filePath, 'utf8');
+        const lines = fileContent.split('\n');
+        for (const line of lines) {
+          if (line.trim()) {
+            commandHistory.push(line);
+          }
+        }
+        return '';
+      } catch (err) {
+        return `history: ${filePath}: No such file or directory\n`;
+      }
+    }
+    
+    // Normal history display
     const limit = cmdArgs[0] ? parseInt(cmdArgs[0]) : commandHistory.length;
     const startIndex = Math.max(0, commandHistory.length - limit);
     let result = '';
@@ -516,6 +534,25 @@ function repl() {
     
     // Handle history builtin
     if (cmd === "history") {
+      // Check for -r flag (read from file)
+      if (cmdArgs[0] === '-r' && cmdArgs[1]) {
+        const filePath = cmdArgs[1];
+        try {
+          const fileContent = fs.readFileSync(filePath, 'utf8');
+          const lines = fileContent.split('\n');
+          for (const line of lines) {
+            if (line.trim()) {
+              commandHistory.push(line);
+            }
+          }
+        } catch (err) {
+          console.log(`history: ${filePath}: No such file or directory`);
+        }
+        repl();
+        return;
+      }
+      
+      // Normal history display
       const limit = cmdArgs[0] ? parseInt(cmdArgs[0]) : commandHistory.length;
       const startIndex = Math.max(0, commandHistory.length - limit);
       for (let i = startIndex; i < commandHistory.length; i++) {

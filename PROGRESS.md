@@ -1772,6 +1772,99 @@ $ history 10   # Request more than exists, show all available
 
 ---
 
+### Stage 28: Read History from File (`history -r <path>`)
+**Goal**: Load command history from a file and append to in-memory history.
+
+**History -r Behavior**:
+- `history -r <path>` reads commands from a file
+- Appends file contents to existing history
+- Skips empty lines
+- The `history -r` command itself is in the history
+
+**Example**:
+```bash
+# File contains:
+# echo hello
+# echo world
+# (empty line)
+
+$ history -r /path/to/history.txt
+$ history
+    1  history -r /path/to/history.txt
+    2  echo hello
+    3  echo world
+    4  history
+```
+
+**Implementation**:
+```javascript
+// In executeBuiltin (for pipelines):
+else if (cmd === 'history') {
+  // Check for -r flag (read from file)
+  if (cmdArgs[0] === '-r' && cmdArgs[1]) {
+    const filePath = cmdArgs[1];
+    try {
+      const fileContent = fs.readFileSync(filePath, 'utf8');
+      const lines = fileContent.split('\n');
+      for (const line of lines) {
+        if (line.trim()) {
+          commandHistory.push(line);
+        }
+      }
+      return '';
+    } catch (err) {
+      return `history: ${filePath}: No such file or directory\n`;
+    }
+  }
+  
+  // Normal history display...
+}
+
+// In main REPL:
+if (cmd === "history") {
+  if (cmdArgs[0] === '-r' && cmdArgs[1]) {
+    const filePath = cmdArgs[1];
+    try {
+      const fileContent = fs.readFileSync(filePath, 'utf8');
+      const lines = fileContent.split('\n');
+      for (const line of lines) {
+        if (line.trim()) {
+          commandHistory.push(line);
+        }
+      }
+    } catch (err) {
+      console.log(`history: ${filePath}: No such file or directory`);
+    }
+    repl();
+    return;
+  }
+  
+  // Normal history display...
+}
+```
+
+**Key Points**:
+- **Check for `-r` flag**: First argument must be `-r`
+- **Read file synchronously**: Use `fs.readFileSync()`
+- **Split by newlines**: `fileContent.split('\n')`
+- **Skip empty lines**: `if (line.trim())`
+- **Append to history**: `commandHistory.push(line)`
+- **Error handling**: Catch file read errors gracefully
+- **No output on success**: `-r` command produces no output
+- **Preserve order**: File commands are added after current history
+
+**Use Cases**:
+- Loading persistent history on shell startup
+- Importing commands from another session
+- Restoring history after shell restart
+
+**Future Enhancements** (not implemented):
+- `history -w <path>` - write history to file
+- `history -a <path>` - append new commands to file
+- Automatic history persistence on exit
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`
