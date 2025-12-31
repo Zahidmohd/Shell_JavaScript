@@ -50,8 +50,8 @@ function completer(line) {
   // Get matches from PATH executables
   const executableHits = getExecutablesFromPath(line);
   
-  // Combine all hits
-  const hits = [...builtinHits, ...executableHits];
+  // Combine all hits and remove duplicates
+  const hits = [...new Set([...builtinHits, ...executableHits])];
   
   // If there's exactly one match, add a space at the end
   if (hits.length === 1) {
