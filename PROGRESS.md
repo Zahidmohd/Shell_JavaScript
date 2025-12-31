@@ -244,6 +244,7 @@ if (executablePath) {
   // Execute with spawnSync
   const result = spawnSync(executablePath, args, {
     stdio: "inherit", // Inherit stdin, stdout, stderr
+    argv0: programName, // Set argv[0] to program name, not full path
   });
   
   repl();
