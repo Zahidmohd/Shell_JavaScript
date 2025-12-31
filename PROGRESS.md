@@ -258,12 +258,51 @@ console.log(`${command}: command not found`);
 **Key Points**:
 - Use `child_process.spawnSync()` to execute programs synchronously
 - `stdio: "inherit"` passes stdin/stdout/stderr to the child process
+- `argv0: programName` sets `argv[0]` to just the program name (not full path)
 - Arguments are passed as an array (excluding program name)
 - The program's output automatically displays in the shell
 
 **Node.js APIs Used**:
 - `spawnSync(command, args, options)` - synchronously spawn child process
 - `stdio: "inherit"` - child uses parent's stdio streams
+- `argv0` - explicitly set `argv[0]` to program name (not full path)
+
+---
+
+### Stage 9: Implement `pwd` Builtin
+**Goal**: Print the current working directory.
+
+**The pwd Command**:
+- Stands for "print working directory"
+- Displays the full, absolute path of the current directory
+- The shell's working directory is where it was started from
+- Must be a builtin (not an external program)
+
+**Example**:
+```
+$ pwd
+/home/user/projects
+$ pwd
+/usr/local/bin
+```
+
+**Implementation**:
+```javascript
+if (command === "pwd") {
+  console.log(process.cwd());
+  repl();
+  return;
+}
+```
+
+**Key Points**:
+- Use `process.cwd()` to get the current working directory
+- Returns the absolute path as a string
+- Simple one-line implementation
+- Must also add "pwd" to the builtins list for the `type` command
+
+**Node.js APIs Used**:
+- `process.cwd()` - returns the current working directory of the Node.js process
 
 ---
 
@@ -321,7 +360,7 @@ function repl() {
     // Handle type builtin
     if (command.startsWith("type ")) {
       const arg = command.slice(5).trim();
-      const builtins = ["echo", "exit", "type"];
+      const builtins = ["echo", "exit", "type", "pwd"];
       
       if (builtins.includes(arg)) {
         console.log(`${arg} is a shell builtin`);
@@ -338,6 +377,13 @@ function repl() {
       return;
     }
     
+    // Handle pwd builtin
+    if (command === "pwd") {
+      console.log(process.cwd());
+      repl();
+      return;
+    }
+    
     // Try to execute as external program
     const parts = command.split(" ");
     const programName = parts[0];
@@ -348,6 +394,7 @@ function repl() {
       // Execute the external program
       const result = spawnSync(executablePath, args, {
         stdio: "inherit",
+        argv0: programName,
       });
       
       repl();
@@ -368,7 +415,6 @@ repl();
 
 ## Next Stages (To Be Implemented)
 
-- [ ] Implement `pwd` builtin (print working directory)
 - [ ] Implement `cd` builtin (change directory)
 - [ ] Implement piping
 - [ ] Implement redirection
@@ -391,7 +437,7 @@ A **Read-Eval-Print Loop** is an interactive programming environment that:
 - **External**: Separate programs the shell must spawn (e.g., `ls`, `cat`, `node`)
 
 ### Why Some Commands Must Be Builtins
-Commands like `exit` and `cd` must be builtins because they need to affect the shell's own process (exit the shell, change the shell's working directory).
+Commands like `exit` and `cd` must be builtins because they need to affect the shell's own process (exit the shell, change the shell's working directory). While `pwd` could technically be an external program, it's commonly implemented as a builtin for efficiency.
 
 ### PATH Environment Variable
 - **Purpose**: Tells the shell where to look for executable programs
@@ -411,8 +457,10 @@ Commands like `exit` and `cd` must be builtins because they need to affect the s
 - **Node.js APIs**:
   - `child_process.spawnSync()` - synchronously create child process
   - `stdio: "inherit"` - child inherits parent's input/output streams
+  - `argv0` option - explicitly sets `argv[0]` (program name) seen by child
   - Arguments passed as array to child process
 - **Synchronous vs Asynchronous**: Using `spawnSync()` blocks the shell until program completes
+- **Important**: By default, `argv[0]` would be the full path to the executable. Use `argv0` to set it to just the program name
 
 ---
 

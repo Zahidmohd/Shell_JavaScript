@@ -49,7 +49,7 @@ function repl() {
     // Handle type builtin
     if (command.startsWith("type ")) {
       const arg = command.slice(5).trim(); // Remove "type " prefix
-      const builtins = ["echo", "exit", "type"];
+      const builtins = ["echo", "exit", "type", "pwd"];
       
       // Check if it's a builtin first
       if (builtins.includes(arg)) {
@@ -64,6 +64,13 @@ function repl() {
         }
       }
       
+      repl();
+      return;
+    }
+    
+    // Handle pwd builtin
+    if (command === "pwd") {
+      console.log(process.cwd());
       repl();
       return;
     }
