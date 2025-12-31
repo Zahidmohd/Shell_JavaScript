@@ -1623,6 +1623,82 @@ if (lastProc.stdout && !lastProc.on) {
 
 ---
 
+### Stage 26: Implement History Builtin
+**Goal**: Add `history` as a shell builtin command that lists previously executed commands.
+
+**History Builtin Behavior**:
+- Tracks all commands executed in the shell session
+- Lists commands with line numbers
+- Can be checked with `type history` → "history is a shell builtin"
+
+**Example**:
+```bash
+$ echo hello
+hello
+$ pwd
+/home/user
+$ history
+    1  echo hello
+    2  pwd
+    3  history
+```
+
+**Implementation**:
+```javascript
+// Track command history
+const commandHistory = [];
+
+// Add to builtins list
+function isBuiltin(cmd) {
+  return ['echo', 'exit', 'type', 'pwd', 'cd', 'history'].includes(cmd);
+}
+
+// In executeBuiltin (for pipelines):
+else if (cmd === 'history') {
+  let result = '';
+  for (let i = 0; i < commandHistory.length; i++) {
+    result += `    ${i + 1}  ${commandHistory[i]}\n`;
+  }
+  return result;
+}
+
+// In REPL:
+function repl() {
+  rl.question("$ ", (command) => {
+    // Add command to history
+    if (command.trim()) {
+      commandHistory.push(command);
+    }
+    
+    // ... handle command ...
+    
+    // Handle history builtin
+    if (cmd === "history") {
+      for (let i = 0; i < commandHistory.length; i++) {
+        console.log(`    ${i + 1}  ${commandHistory[i]}`);
+      }
+      repl();
+      return;
+    }
+  });
+}
+```
+
+**Key Points**:
+- **Track every command**: Add to `commandHistory` array at start of REPL
+- **Format**: 4 spaces, line number, 2 spaces, command
+- **Include in type**: Add 'history' to builtins list in `type` command
+- **Works in pipelines**: Can be used like `history | grep echo`
+
+**Future Enhancements** (not implemented):
+- Persistent history across sessions (save to file)
+- History navigation with up/down arrows
+- History expansion (`!n`, `!!`, `!string`)
+- History search (Ctrl+R)
+- Max history size limit
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`

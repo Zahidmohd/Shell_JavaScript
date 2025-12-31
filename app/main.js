@@ -268,9 +268,12 @@ function findExecutable(command) {
   return null;
 }
 
+// Track command history
+const commandHistory = [];
+
 // Check if command is a builtin
 function isBuiltin(cmd) {
-  return ['echo', 'exit', 'type', 'pwd', 'cd'].includes(cmd);
+  return ['echo', 'exit', 'type', 'pwd', 'cd', 'history'].includes(cmd);
 }
 
 // Execute builtin command and return output as string
@@ -281,7 +284,7 @@ function executeBuiltin(cmd, cmdArgs) {
     return process.cwd() + '\n';
   } else if (cmd === 'type') {
     const arg = cmdArgs[0];
-    const builtins = ['echo', 'exit', 'type', 'pwd', 'cd'];
+    const builtins = ['echo', 'exit', 'type', 'pwd', 'cd', 'history'];
     if (builtins.includes(arg)) {
       return `${arg} is a shell builtin\n`;
     }
@@ -290,6 +293,12 @@ function executeBuiltin(cmd, cmdArgs) {
       return `${arg} is ${executablePath}\n`;
     }
     return `${arg}: not found\n`;
+  } else if (cmd === 'history') {
+    let result = '';
+    for (let i = 0; i < commandHistory.length; i++) {
+      result += `    ${i + 1}  ${commandHistory[i]}\n`;
+    }
+    return result;
   } else if (cmd === 'cd') {
     const dir = cmdArgs[0] === '~' ? process.env.HOME : cmdArgs[0];
     try {
@@ -406,6 +415,11 @@ function executePipeline(commands) {
 
 function repl() {
   rl.question("$ ", (command) => {
+    // Add command to history (if not empty)
+    if (command.trim()) {
+      commandHistory.push(command);
+    }
+    
     // Check for pipeline
     if (command.includes('|')) {
       const commands = command.split('|');
@@ -470,7 +484,7 @@ function repl() {
     
     // Handle type builtin
     if (cmd === "type") {
-      const builtins = ["echo", "exit", "type", "pwd", "cd"];
+      const builtins = ["echo", "exit", "type", "pwd", "cd", "history"];
       const arg = cmdArgs[0];
       
       let output;
@@ -494,6 +508,15 @@ function repl() {
     // Handle pwd builtin
     if (cmd === "pwd") {
       writeOutput(process.cwd());
+      repl();
+      return;
+    }
+    
+    // Handle history builtin
+    if (cmd === "history") {
+      for (let i = 0; i < commandHistory.length; i++) {
+        console.log(`    ${i + 1}  ${commandHistory[i]}`);
+      }
       repl();
       return;
     }
