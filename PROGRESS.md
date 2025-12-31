@@ -2239,6 +2239,106 @@ Commands like `exit` and `cd` **must** be builtins because they need to affect t
 
 ---
 
+## Stage 25: Command History Write (`history -w`)
+
+### What We Implemented
+Added support for writing command history from memory to a file using the `history -w <path>` command.
+
+### Key Concepts
+
+#### The `history -w` Command
+- **Purpose**: Write all commands from the in-memory history to a file
+- **Syntax**: `history -w <path_to_history_file>`
+- **Behavior**:
+  - Writes all commands from `commandHistory` array to the specified file
+  - Creates the file if it doesn't exist
+  - Overwrites the file if it already exists
+  - Includes the `history -w` command itself in the file
+  - Adds a trailing newline character at the end of the file
+
+#### File Format
+- Each command is written on a separate line
+- Commands are written in the order they were executed
+- The file ends with a newline character (appears as an empty line when viewed)
+
+### Code Changes
+
+#### In `executeBuiltin()` function:
+```javascript
+// Check for -w flag (write to file)
+if (cmdArgs[0] === '-w' && cmdArgs[1]) {
+  const filePath = cmdArgs[1];
+  try {
+    // Write all commands to file with trailing newline
+    const content = commandHistory.join('\n') + '\n';
+    fs.writeFileSync(filePath, content, 'utf8');
+    return '';
+  } catch (err) {
+    return `history: ${filePath}: cannot write history file\n`;
+  }
+}
+```
+
+#### In main REPL history handler:
+```javascript
+// Check for -w flag (write to file)
+if (cmdArgs[0] === '-w' && cmdArgs[1]) {
+  const filePath = cmdArgs[1];
+  try {
+    // Write all commands to file with trailing newline
+    const content = commandHistory.join('\n') + '\n';
+    fs.writeFileSync(filePath, content, 'utf8');
+  } catch (err) {
+    console.log(`history: ${filePath}: cannot write history file`);
+  }
+  repl();
+  return;
+}
+```
+
+### Example Usage
+```bash
+$ echo hello
+hello
+$ echo world
+world
+$ history -w /tmp/my_history.txt
+$ cat /tmp/my_history.txt
+echo hello
+echo world
+history -w /tmp/my_history.txt
+
+```
+
+### Technical Details
+
+#### Writing to Files in Node.js
+- **`fs.writeFileSync(path, data, encoding)`**: Synchronously writes data to a file
+  - Creates the file if it doesn't exist
+  - Overwrites the file if it already exists
+  - `encoding: 'utf8'` ensures proper text encoding
+- **Array.join('\n')**: Joins array elements with newline separator
+- **Trailing Newline**: Added by appending `+ '\n'` to ensure file ends with empty line
+
+#### Error Handling
+- Try-catch block to handle file write errors
+- Returns error message if file cannot be written
+- Common errors: permission denied, invalid path, disk full
+
+#### Integration with Command History
+- The `history -w` command itself is added to history before execution
+- This means the `history -w` command appears in the file it creates
+- All previous commands are preserved in the order they were executed
+
+### Key Takeaways
+- **File Persistence**: Allows users to save their command history permanently
+- **Automatic Creation**: File is created if it doesn't exist
+- **Overwrite Behavior**: Existing files are completely replaced
+- **Trailing Newline**: Standard convention for text files in Unix/Linux
+- **Self-Inclusion**: The `history -w` command is part of the history it writes
+
+---
+
 ## Notes
 - Using Node.js `readline` module for input/output
 - `console.log()` automatically adds newline character

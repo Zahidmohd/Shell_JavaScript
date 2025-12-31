@@ -311,6 +311,19 @@ function executeBuiltin(cmd, cmdArgs) {
       }
     }
     
+    // Check for -w flag (write to file)
+    if (cmdArgs[0] === '-w' && cmdArgs[1]) {
+      const filePath = cmdArgs[1];
+      try {
+        // Write all commands to file with trailing newline
+        const content = commandHistory.join('\n') + '\n';
+        fs.writeFileSync(filePath, content, 'utf8');
+        return '';
+      } catch (err) {
+        return `history: ${filePath}: cannot write history file\n`;
+      }
+    }
+    
     // Normal history display
     const limit = cmdArgs[0] ? parseInt(cmdArgs[0]) : commandHistory.length;
     const startIndex = Math.max(0, commandHistory.length - limit);
@@ -547,6 +560,20 @@ function repl() {
           }
         } catch (err) {
           console.log(`history: ${filePath}: No such file or directory`);
+        }
+        repl();
+        return;
+      }
+      
+      // Check for -w flag (write to file)
+      if (cmdArgs[0] === '-w' && cmdArgs[1]) {
+        const filePath = cmdArgs[1];
+        try {
+          // Write all commands to file with trailing newline
+          const content = commandHistory.join('\n') + '\n';
+          fs.writeFileSync(filePath, content, 'utf8');
+        } catch (err) {
+          console.log(`history: ${filePath}: cannot write history file`);
         }
         repl();
         return;
