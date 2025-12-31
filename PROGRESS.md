@@ -2469,6 +2469,156 @@ history -a /tmp/my_history.txt
 
 ---
 
+## Stage 27: Load History on Startup (`HISTFILE`)
+
+### What We Implemented
+Added support for automatically loading command history from a file on startup using the `HISTFILE` environment variable.
+
+### Key Concepts
+
+#### The `HISTFILE` Environment Variable
+- **Purpose**: Specifies the path to the history file
+- **Usage**: Used to load history on startup and save history on exit
+- **Standard**: Common in Unix shells (bash, zsh, etc.)
+- **Example**: `HISTFILE=/home/user/.shell_history ./your_program.sh`
+
+#### Startup Behavior
+- When the shell starts, it checks if `HISTFILE` is set
+- If set, it reads the file and loads all commands into memory
+- These commands are then available via the `history` command
+- If the file doesn't exist or can't be read, the shell starts with empty history (no error)
+
+#### Integration with History Commands
+- **Loaded commands**: Marked as already written (updates `lastWrittenIndex`)
+- **`history -a`**: Won't duplicate loaded commands (only appends new ones)
+- **`history -w`**: Will overwrite file with all commands (loaded + new)
+- **`history` display**: Shows loaded commands with proper numbering
+
+### Code Changes
+
+#### Startup history loading (before REPL starts):
+```javascript
+// Load history from HISTFILE on startup
+if (process.env.HISTFILE) {
+  try {
+    const fileContent = fs.readFileSync(process.env.HISTFILE, 'utf8');
+    const lines = fileContent.split('\n');
+    for (const line of lines) {
+      if (line.trim()) {
+        commandHistory.push(line);
+      }
+    }
+    // Mark these commands as already written (so history -a doesn't duplicate them)
+    lastWrittenIndex = commandHistory.length;
+  } catch (err) {
+    // File doesn't exist or can't be read, start with empty history
+  }
+}
+
+// Start the REPL
+repl();
+```
+
+### Example Usage
+```bash
+# Create a history file
+$ echo "echo hello" > /tmp/my_history.txt
+$ echo "echo world" >> /tmp/my_history.txt
+
+# Start shell with HISTFILE
+$ HISTFILE=/tmp/my_history.txt ./your_program.sh
+$ history
+    1  echo hello
+    2  echo world
+$ echo new_command
+new_command
+$ history
+    1  echo hello
+    2  echo world
+    3  echo new_command
+    4  history
+$ 
+```
+
+### Technical Details
+
+#### Reading Environment Variables
+- **`process.env.HISTFILE`**: Accesses the HISTFILE environment variable
+- **Conditional check**: Only loads if the variable is set
+- **Error handling**: Silently fails if file doesn't exist (starts with empty history)
+
+#### History Loading Process
+1. Check if `HISTFILE` environment variable exists
+2. Try to read the file using `fs.readFileSync()`
+3. Split content into lines using `\n`
+4. Filter out empty lines (lines with only whitespace)
+5. Add each command to `commandHistory` array
+6. Update `lastWrittenIndex` to prevent duplication
+
+#### Setting `lastWrittenIndex`
+- **Purpose**: Marks loaded commands as "already written"
+- **Effect**: `history -a` won't re-append these commands
+- **Value**: Set to `commandHistory.length` (number of loaded commands)
+- **Behavior**: Only new commands executed in this session will be appended
+
+#### Error Handling
+- **Silent failure**: If file doesn't exist, shell starts with empty history
+- **No error message**: This is standard behavior for shells
+- **Graceful degradation**: Shell works normally even if history can't be loaded
+
+#### History Numbering
+- Loaded commands are numbered starting from 1
+- New commands continue the numbering sequence
+- The `history` command itself is added to history and numbered
+
+### Integration Examples
+
+#### Example 1: Basic Loading
+```bash
+# history file contains:
+# echo hello
+# echo world
+
+$ HISTFILE=/tmp/hist.txt ./shell.sh
+$ history
+    1  echo hello
+    2  echo world
+$ 
+```
+
+#### Example 2: With New Commands
+```bash
+$ HISTFILE=/tmp/hist.txt ./shell.sh
+$ echo test
+test
+$ history
+    1  echo hello
+    2  echo world
+    3  echo test
+    4  history
+$ 
+```
+
+#### Example 3: With history -a
+```bash
+$ HISTFILE=/tmp/hist.txt ./shell.sh
+$ echo new
+new
+$ history -a /tmp/hist.txt
+# Only "echo new" and "history -a ..." are appended
+# The original "echo hello" and "echo world" are not duplicated
+```
+
+### Key Takeaways
+- **Automatic Loading**: History is loaded automatically on startup if `HISTFILE` is set
+- **Silent Failure**: Missing or unreadable files don't cause errors
+- **Seamless Integration**: Loaded history works with all history commands
+- **No Duplication**: Smart tracking prevents re-writing loaded commands with `history -a`
+- **Standard Behavior**: Mimics behavior of real Unix shells (bash, zsh)
+- **Persistence**: Users can maintain command history across shell sessions
+
+---
+
 ## Notes
 - Using Node.js `readline` module for input/output
 - `console.log()` automatically adds newline character

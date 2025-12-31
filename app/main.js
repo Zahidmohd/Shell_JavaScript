@@ -681,5 +681,22 @@ function repl() {
   });
 }
 
+// Load history from HISTFILE on startup
+if (process.env.HISTFILE) {
+  try {
+    const fileContent = fs.readFileSync(process.env.HISTFILE, 'utf8');
+    const lines = fileContent.split('\n');
+    for (const line of lines) {
+      if (line.trim()) {
+        commandHistory.push(line);
+      }
+    }
+    // Mark these commands as already written (so history -a doesn't duplicate them)
+    lastWrittenIndex = commandHistory.length;
+  } catch (err) {
+    // File doesn't exist or can't be read, start with empty history
+  }
+}
+
 // Start the REPL
 repl();
