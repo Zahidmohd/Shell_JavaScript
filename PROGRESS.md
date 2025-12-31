@@ -646,6 +646,65 @@ function parseCommand(commandLine) {
 
 ---
 
+### Stage 15: Implement Backslash Escaping (Inside Double Quotes)
+**Goal**: Support backslash escaping within double quotes for specific characters.
+
+**Backslash in Double Quotes Rules**:
+- Inside double quotes, backslash escapes **only specific characters**
+- Escapeable characters: `\`, `"`, `$`
+- For these: backslash is removed, next character is literal
+- For other characters: both backslash and character are kept
+
+**Examples**:
+| Command | Output | Explanation |
+|---------|--------|-------------|
+| `echo "hello\\"world"` | `hello\world` | `\\` → `\` (escaped backslash) |
+| `echo "say \"hi\""` | `say "hi"` | `\"` → `"` (escaped double quote) |
+| `echo "cost \$5"` | `cost $5` | `\$` → `$` (escaped dollar sign) |
+| `echo "test\nexample"` | `test\nexample` | `\n` → `\n` (backslash kept, not escapeable) |
+| `echo "hello'script'\\'test"` | `hello'script'\'test` | `\\` escaped, single quotes literal |
+
+**Comparison of Escaping in Different Contexts**:
+| Context | `\\` | `\"` | `\'` | `\n` |
+|---------|------|------|------|------|
+| Outside quotes | `\` | `"` | `'` | `n` |
+| Inside single quotes | `\\` | `\"` | `\'` | `\n` |
+| Inside double quotes | `\` | `"` | `\"` | `\n` |
+
+**Implementation**:
+```javascript
+// Handle backslash escaping inside double quotes
+if (char === '\\' && inDoubleQuote && !inSingleQuote) {
+  // Inside double quotes, backslash escapes: \, ", $
+  i++;
+  if (i < commandLine.length) {
+    const nextChar = commandLine[i];
+    if (nextChar === '\\' || nextChar === '"' || nextChar === '$') {
+      // Escape these characters - remove backslash
+      currentArg += nextChar;
+    } else {
+      // For other characters, keep both backslash and character
+      currentArg += '\\' + nextChar;
+    }
+  }
+  continue;
+}
+```
+
+**Key Points**:
+- Check for backslash AND `inDoubleQuote` state
+- Look at next character
+- If next character is `\`, `"`, or `$`: remove backslash, add character only
+- Otherwise: keep backslash + character (not escapeable in double quotes)
+- This is why `\n` stays as `\n` inside double quotes
+
+**Why Only These Characters?**:
+- `\\` - to allow literal backslashes in double-quoted strings
+- `\"` - to allow literal double quotes without ending the string
+- `\$` - to allow literal dollar signs (prevents variable expansion)
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`
@@ -676,6 +735,20 @@ function parseCommand(commandLine) {
       i++;
       if (i < commandLine.length) {
         currentArg += commandLine[i];
+      }
+      continue;
+    }
+    
+    // Handle backslash escaping inside double quotes
+    if (char === '\\' && inDoubleQuote && !inSingleQuote) {
+      i++;
+      if (i < commandLine.length) {
+        const nextChar = commandLine[i];
+        if (nextChar === '\\' || nextChar === '"' || nextChar === '$') {
+          currentArg += nextChar;
+        } else {
+          currentArg += '\\' + nextChar;
+        }
       }
       continue;
     }
@@ -817,7 +890,7 @@ repl();
 
 ## Next Stages (To Be Implemented)
 
-- [ ] Implement backslash escaping in double quotes
+- [ ] Implement backslash escaping in double quotes (e.g., `\"`, `\\`, `\$`)
 - [ ] Implement variable expansion (`$VAR`) in double quotes
 - [ ] Implement command substitution (`` `cmd` ``)
 - [ ] Implement piping (e.g., `cat file.txt | grep search`)

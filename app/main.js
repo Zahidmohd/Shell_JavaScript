@@ -28,6 +28,23 @@ function parseCommand(commandLine) {
       continue;
     }
     
+    // Handle backslash escaping inside double quotes
+    if (char === '\\' && inDoubleQuote && !inSingleQuote) {
+      // Inside double quotes, backslash escapes: \, ", $
+      i++;
+      if (i < commandLine.length) {
+        const nextChar = commandLine[i];
+        if (nextChar === '\\' || nextChar === '"' || nextChar === '$') {
+          // Escape these characters - remove backslash
+          currentArg += nextChar;
+        } else {
+          // For other characters, keep both backslash and character
+          currentArg += '\\' + nextChar;
+        }
+      }
+      continue;
+    }
+    
     if (char === "'" && !inDoubleQuote) {
       // Toggle single quote (only if not in double quote)
       inSingleQuote = !inSingleQuote;
