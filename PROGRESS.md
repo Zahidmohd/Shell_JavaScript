@@ -577,6 +577,75 @@ function parseCommand(commandLine) {
 
 ---
 
+### Stage 14: Implement Backslash Escaping (Outside Quotes)
+**Goal**: Support backslash escaping to treat special characters literally outside quotes.
+
+**Backslash Escaping Rules**:
+- Backslash `\` outside quotes acts as an escape character
+- It removes the special meaning of the next character
+- The backslash itself is removed from the output
+- Works for ANY character (special or regular)
+
+**Examples**:
+| Command | Output | Explanation |
+|---------|--------|-------------|
+| `echo three\ \ \ spaces` | `three   spaces` | Each `\ ` creates a literal space |
+| `echo before\     after` | `before  after` | First space escaped, others collapsed |
+| `echo test\nexample` | `testnexample` | `\n` becomes just `n` (no special meaning) |
+| `echo hello\\world` | `hello\world` | `\\` becomes single literal backslash |
+| `echo \'hello\'` | `'hello'` | `\'` makes single quotes literal |
+| `echo \"hello\"` | `"hello"` | `\"` makes double quotes literal |
+
+**Use Cases**:
+- Escaping spaces: `cat /tmp/file\ name` → treats as single filename
+- Literal quotes: `echo \'quoted\'` → includes quotes in output
+- Literal backslash: `echo \\` → outputs single backslash
+- Any special character: `\$`, `\*`, `\?`, etc.
+
+**Implementation**:
+```javascript
+function parseCommand(commandLine) {
+  const args = [];
+  let currentArg = '';
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  
+  for (let i = 0; i < commandLine.length; i++) {
+    const char = commandLine[i];
+    
+    // Handle backslash escaping outside quotes
+    if (char === '\\' && !inSingleQuote && !inDoubleQuote) {
+      // Skip the backslash and take the next character literally
+      i++;
+      if (i < commandLine.length) {
+        currentArg += commandLine[i];
+      }
+      continue;
+    }
+    
+    // ... rest of parsing logic
+  }
+  
+  return args;
+}
+```
+
+**Key Points**:
+- Check for backslash BEFORE other conditions
+- Only apply outside quotes (inside single quotes, backslash is literal)
+- Skip the backslash character (increment `i`)
+- Add the next character directly to currentArg (treating it literally)
+- Use `continue` to skip normal processing of that character
+
+**Backslash in Different Contexts**:
+| Context | Behavior |
+|---------|----------|
+| `\x` (outside quotes) | Escape next character, backslash removed |
+| `'\x'` (inside single quotes) | Backslash is literal, `\x` → `\x` |
+| `"\x"` (inside double quotes) | Special (handled in future stage) |
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`
@@ -601,6 +670,15 @@ function parseCommand(commandLine) {
   
   for (let i = 0; i < commandLine.length; i++) {
     const char = commandLine[i];
+    
+    // Handle backslash escaping outside quotes
+    if (char === '\\' && !inSingleQuote && !inDoubleQuote) {
+      i++;
+      if (i < commandLine.length) {
+        currentArg += commandLine[i];
+      }
+      continue;
+    }
     
     if (char === "'" && !inDoubleQuote) {
       inSingleQuote = !inSingleQuote;
@@ -831,6 +909,7 @@ Commands like `exit` and `cd` **must** be builtins because they need to affect t
   - Spaces outside quotes → argument separator
   - Quote characters → removed from final arguments
   - Quotes inside quotes → treated as literal characters
+  - Backslash outside quotes → escape next character
 - **Edge Cases**:
   - Empty quotes: `echo ''world` → `world`
   - Adjacent quotes: `'hello''world'` → `helloworld`
@@ -838,14 +917,20 @@ Commands like `exit` and `cd` **must** be builtins because they need to affect t
   - Spaces in quotes: `echo 'hello  world'` → `hello  world` (preserved)
   - Mixed quotes: `echo "it's"` → `it's`
   - Nested quotes: `echo '"hello"'` → `"hello"`
-- **Single vs Double Quotes**:
-  - Single quotes (`'`): everything literal (no expansion, no escaping)
-  - Double quotes (`"`): most things literal, but allow:
+  - Escaped spaces: `echo hello\ world` → `hello world` (single argument)
+  - Escaped backslash: `echo \\` → `\`
+  - Escaped quotes: `echo \'hello\'` → `'hello'`
+- **Escape Mechanisms**:
+  - **Backslash (`\`)** outside quotes: Escapes next character, backslash removed
+    - Works on ANY character: `\n` → `n`, `\ ` → space, `\\` → `\`
+  - **Single quotes (`'`)**: Everything literal (no escaping possible)
+    - `'\n'` → `\n` (backslash is literal)
+  - **Double quotes (`"`)**: Most things literal, special handling:
     - Variable expansion (`$VAR`) - future stage
     - Command substitution (`` `cmd` ``) - future stage
-    - Backslash escaping (`\`) - future stage
-  - Quote Interaction: Single quotes inside double quotes are literal, and vice versa
-- **Why It Matters**: Enables file names with spaces, preserving formatting, literal strings, protecting special characters
+    - Backslash escaping (`\"`, `\\`, `\$`) - future stage
+- **Quote Interaction**: Single quotes inside double quotes are literal, and vice versa
+- **Why It Matters**: Enables file names with spaces, preserving formatting, literal strings, protecting special characters, precise control over interpretation
 
 ---
 

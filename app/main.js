@@ -18,6 +18,16 @@ function parseCommand(commandLine) {
   for (let i = 0; i < commandLine.length; i++) {
     const char = commandLine[i];
     
+    // Handle backslash escaping outside quotes
+    if (char === '\\' && !inSingleQuote && !inDoubleQuote) {
+      // Skip the backslash and take the next character literally
+      i++;
+      if (i < commandLine.length) {
+        currentArg += commandLine[i];
+      }
+      continue;
+    }
+    
     if (char === "'" && !inDoubleQuote) {
       // Toggle single quote (only if not in double quote)
       inSingleQuote = !inSingleQuote;
