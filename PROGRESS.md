@@ -1536,6 +1536,93 @@ function executePipeline(commands) {
 
 ---
 
+### Stage 25: Pipelines with Builtin Commands
+**Goal**: Support builtin commands (echo, type, pwd, cd) in pipelines.
+
+**Challenge**:
+- Builtins run in the shell process (not separate processes)
+- Need to capture their output and pipe it to next command
+- Handle builtins at any position in the pipeline
+
+**Examples**:
+```bash
+$ echo raspberry\nblueberry | wc
+       1       1      20
+
+$ ls | type exit
+exit is a shell builtin
+```
+
+**Implementation Strategy**:
+1. Detect if command is a builtin
+2. Execute builtin and capture output as string
+3. Create a Readable stream from the output
+4. Treat the stream like a process's stdout for piping
+
+**Key Code**:
+```javascript
+// Check if command is builtin
+function isBuiltin(cmd) {
+  return ['echo', 'exit', 'type', 'pwd', 'cd'].includes(cmd);
+}
+
+// Execute builtin and return output
+function executeBuiltin(cmd, cmdArgs) {
+  if (cmd === 'echo') {
+    return cmdArgs.join(' ') + '\n';
+  } else if (cmd === 'type') {
+    const arg = cmdArgs[0];
+    if (builtins.includes(arg)) {
+      return `${arg} is a shell builtin\n`;
+    }
+    // ... check PATH ...
+  }
+  // ... other builtins ...
+}
+
+// In pipeline execution:
+if (isBuiltin(cmd)) {
+  const output = executeBuiltin(cmd, cmdArgs);
+  const builtinStream = Readable.from([output]);
+  const mockProc = { stdout: builtinStream, stdin: null };
+  processes.push(mockProc);
+} else {
+  // Normal external command
+  const proc = spawn(executablePath, cmdArgs, spawnOptions);
+  processes.push(proc);
+}
+
+// Connect pipes between all processes
+for (let i = 1; i < processes.length; i++) {
+  if (processes[i - 1].stdout && processes[i].stdin) {
+    processes[i - 1].stdout.pipe(processes[i].stdin);
+  }
+}
+
+// If last is builtin, pipe to stdout
+if (lastProc.stdout && !lastProc.on) {
+  lastProc.stdout.pipe(process.stdout);
+}
+```
+
+**Key Points**:
+- **Readable.from()**: Creates stream from string/buffer
+- **Mock process object**: `{ stdout: stream, stdin: null }`
+- **Unified piping**: Same pipe logic works for both builtins and externals
+- **Builtins don't read stdin**: Current implementation executes with args only
+- **Stream completion**: Listen to 'end' event for streams, 'close' for processes
+
+**Node.js APIs Used**:
+- `Readable.from(data)` - create readable stream from data
+- `stream.pipe(destination)` - pipe stream to another stream
+- `stream.on('end', callback)` - detect stream completion
+
+**Limitations**:
+- Builtins in pipeline don't read from stdin (they use command-line args)
+- This works for most cases but some builtins might need stdin support
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`

@@ -2,6 +2,7 @@ const readline = require("readline");
 const fs = require("fs");
 const path = require("path");
 const { spawnSync, spawn } = require("child_process");
+const { Readable } = require("stream");
 
 // Get all executables from PATH that start with prefix
 function getExecutablesFromPath(prefix) {
@@ -267,6 +268,40 @@ function findExecutable(command) {
   return null;
 }
 
+// Check if command is a builtin
+function isBuiltin(cmd) {
+  return ['echo', 'exit', 'type', 'pwd', 'cd'].includes(cmd);
+}
+
+// Execute builtin command and return output as string
+function executeBuiltin(cmd, cmdArgs) {
+  if (cmd === 'echo') {
+    return cmdArgs.join(' ') + '\n';
+  } else if (cmd === 'pwd') {
+    return process.cwd() + '\n';
+  } else if (cmd === 'type') {
+    const arg = cmdArgs[0];
+    const builtins = ['echo', 'exit', 'type', 'pwd', 'cd'];
+    if (builtins.includes(arg)) {
+      return `${arg} is a shell builtin\n`;
+    }
+    const executablePath = findExecutable(arg);
+    if (executablePath) {
+      return `${arg} is ${executablePath}\n`;
+    }
+    return `${arg}: not found\n`;
+  } else if (cmd === 'cd') {
+    const dir = cmdArgs[0] === '~' ? process.env.HOME : cmdArgs[0];
+    try {
+      process.chdir(dir);
+      return '';
+    } catch (err) {
+      return `cd: ${dir}: No such file or directory\n`;
+    }
+  }
+  return '';
+}
+
 // Execute a pipeline of commands
 function executePipeline(commands) {
   if (commands.length === 0) return;
@@ -279,7 +314,7 @@ function executePipeline(commands) {
     return false;
   }
   
-  // Create processes for pipeline
+  // Create processes/streams for pipeline
   const processes = [];
   
   for (let i = 0; i < parsedCommands.length; i++) {
@@ -287,41 +322,84 @@ function executePipeline(commands) {
     const cmd = parsed.args[0];
     const cmdArgs = parsed.args.slice(1);
     
-    // Find executable
-    const executablePath = findExecutable(cmd);
-    if (!executablePath) {
-      console.log(`${cmd}: command not found`);
-      return true;
-    }
-    
-    const spawnOptions = {
-      argv0: cmd,
-      stdio: ['pipe', 'pipe', 'inherit'], // stdin, stdout, stderr
-    };
-    
-    // First command: inherit stdin or use 'pipe'
-    if (i === 0) {
-      spawnOptions.stdio[0] = 'inherit';
-    }
-    
-    // Last command: inherit stdout or use 'pipe'
-    if (i === parsedCommands.length - 1) {
-      spawnOptions.stdio[1] = 'inherit';
-    }
-    
-    const proc = spawn(executablePath, cmdArgs, spawnOptions);
-    processes.push(proc);
-    
-    // Connect previous process stdout to current process stdin
-    if (i > 0) {
-      processes[i - 1].stdout.pipe(proc.stdin);
+    // Check if builtin
+    if (isBuiltin(cmd)) {
+      // Execute builtin and get output
+      const output = executeBuiltin(cmd, cmdArgs);
+      
+      // Create a readable stream from the output
+      const builtinStream = Readable.from([output]);
+      
+      // Create a mock process object with streams
+      const mockProc = {
+        stdout: builtinStream,
+        stdin: null,
+      };
+      
+      processes.push(mockProc);
+    } else {
+      // External command
+      const executablePath = findExecutable(cmd);
+      if (!executablePath) {
+        console.log(`${cmd}: command not found`);
+        return true;
+      }
+      
+      const spawnOptions = {
+        argv0: cmd,
+        stdio: ['pipe', 'pipe', 'inherit'], // stdin, stdout, stderr
+      };
+      
+      // First command: inherit stdin or use 'pipe'
+      if (i === 0) {
+        spawnOptions.stdio[0] = 'inherit';
+      }
+      
+      // Last command: inherit stdout or use 'pipe'
+      if (i === parsedCommands.length - 1) {
+        spawnOptions.stdio[1] = 'inherit';
+      }
+      
+      const proc = spawn(executablePath, cmdArgs, spawnOptions);
+      processes.push(proc);
     }
   }
   
-  // Wait for the last process to finish
-  processes[processes.length - 1].on('close', () => {
-    repl();
-  });
+  // Connect pipes between processes
+  for (let i = 1; i < processes.length; i++) {
+    if (processes[i - 1].stdout && processes[i].stdin) {
+      processes[i - 1].stdout.pipe(processes[i].stdin);
+    } else if (processes[i - 1].stdout && !processes[i].stdin) {
+      // Previous has stdout, current doesn't have stdin (builtin)
+      // Do nothing - builtin doesn't read from stdin in our implementation
+    }
+  }
+  
+  // Handle last process/stream
+  const lastProc = processes[processes.length - 1];
+  
+  // If last process is a builtin, pipe its output to stdout
+  if (lastProc.stdout && !lastProc.on) {
+    // It's a builtin (has stdout but no 'on' method)
+    lastProc.stdout.pipe(process.stdout);
+  }
+  
+  // Wait for the last process/stream to finish
+  if (lastProc.on) {
+    // Real process
+    lastProc.on('close', () => {
+      repl();
+    });
+  } else {
+    // Builtin (mock process with stream)
+    if (lastProc.stdout) {
+      lastProc.stdout.on('end', () => {
+        repl();
+      });
+    } else {
+      repl();
+    }
+  }
   
   return true;
 }
