@@ -1295,28 +1295,44 @@ $ xyz_             # Prompt reappears with original input
 
 **Implementation**:
 ```javascript
-// Combine all hits, remove duplicates, and sort alphabetically
-const hits = [...new Set([...builtinHits, ...executableHits])].sort();
+// Track last completion input for double-TAB detection
+let lastCompletionInput = '';
 
-// If there's exactly one match, add a space at the end
-if (hits.length === 1) {
-  const completion = hits[0] + ' ';
-  return [[completion], line];
-}
-
-// If no matches, ring a bell
-if (hits.length === 0) {
-  process.stdout.write('\x07');
+function completer(line) {
+  const builtins = ["echo", "exit"];
+  const builtinHits = builtins.filter((c) => c.startsWith(line));
+  const executableHits = getExecutablesFromPath(line);
+  
+  // Combine all hits, remove duplicates, and sort alphabetically
+  const hits = [...new Set([...builtinHits, ...executableHits])].sort();
+  
+  // If there's exactly one match, add a space at the end
+  if (hits.length === 1) {
+    const completion = hits[0] + ' ';
+    return [[completion], line];
+  }
+  
+  // If no matches, ring a bell
+  if (hits.length === 0) {
+    process.stdout.write('\x07');
+    return [[], line];
+  }
+  
+  // Multiple matches - check if this is second TAB press
+  if (line === lastCompletionInput) {
+    // Second TAB - display completions and redraw prompt
+    process.stdout.write('\n' + hits.join('  ') + '\n');
+    rl.prompt(true);  // true preserves current line
+    lastCompletionInput = '';
+  } else {
+    // First TAB - ring bell and save input
+    process.stdout.write('\x07');
+    lastCompletionInput = line;
+  }
+  
+  // Return empty to prevent readline's own formatting
   return [[], line];
 }
-
-// If multiple matches, ring a bell (for first TAB press)
-if (hits.length > 1) {
-  process.stdout.write('\x07');
-}
-
-// Return all hits for multiple matches (readline handles double-TAB display)
-return [hits, line];
 ```
 
 **Key Points**:

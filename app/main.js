@@ -40,6 +40,9 @@ function getExecutablesFromPath(prefix) {
   return Array.from(executables);
 }
 
+// Track last completion input for double-TAB detection
+let lastCompletionInput = '';
+
 // Autocomplete function for builtin commands and executables
 function completer(line) {
   const builtins = ["echo", "exit"];
@@ -65,19 +68,27 @@ function completer(line) {
     return [[], line];
   }
   
-  // If multiple matches, ring a bell (for first TAB press)
-  if (hits.length > 1) {
+  // Multiple matches - check if this is second TAB press
+  if (line === lastCompletionInput) {
+    // Second TAB - display completions and redraw prompt
+    process.stdout.write('\n' + hits.join('  ') + '\n');
+    rl.prompt(true);
+    lastCompletionInput = '';
+  } else {
+    // First TAB - ring bell and save input
     process.stdout.write('\x07');
+    lastCompletionInput = line;
   }
   
-  // Return all hits for multiple matches (readline handles double-TAB display)
-  return [hits, line];
+  // Return empty to prevent readline's own formatting
+  return [[], line];
 }
 
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
   completer: completer,
+  prompt: '$ ',
 });
 
 // Parse command line with quote support and redirection
