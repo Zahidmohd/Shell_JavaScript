@@ -12,6 +12,14 @@ function repl() {
       process.exit(0);
     }
     
+    // Handle echo builtin
+    if (command.startsWith("echo ")) {
+      const args = command.slice(5); // Remove "echo " prefix
+      console.log(args);
+      repl();
+      return;
+    }
+    
     console.log(`${command}: command not found`);
     repl(); // Loop back to prompt for next command
   });
