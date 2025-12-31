@@ -150,17 +150,102 @@ if (command.startsWith("type ")) {
 
 ---
 
+### Stage 7: Extend `type` to Search PATH
+**Goal**: Search for executable files in PATH directories.
+
+**The PATH Environment Variable**:
+- Contains a list of directories separated by `:` (Unix) or `;` (Windows)
+- Shell searches these directories to find executable programs
+- Example: `/dir1:/dir2:/dir3`
+
+**Search Algorithm**:
+1. Check if command is a builtin → print `<command> is a shell builtin`
+2. If not builtin, search through each directory in PATH:
+   - Check if file exists
+   - Check if file has execute permissions
+   - If both true → print `<command> is <full_path>`
+3. If not found in any directory → print `<command>: not found`
+
+**Example**:
+```
+$ type grep
+grep is /usr/bin/grep
+$ type ls
+ls is /usr/bin/ls
+$ type invalid_command
+invalid_command: not found
+$ type echo
+echo is a shell builtin
+```
+
+**Implementation**:
+```javascript
+function findExecutable(command) {
+  const pathEnv = process.env.PATH || "";
+  const directories = pathEnv.split(path.delimiter);
+  
+  for (const dir of directories) {
+    const fullPath = path.join(dir, command);
+    
+    try {
+      // Check if file exists and has execute permissions
+      if (fs.existsSync(fullPath)) {
+        fs.accessSync(fullPath, fs.constants.X_OK);
+        return fullPath;
+      }
+    } catch (err) {
+      // No execute permissions or other error, continue
+      continue;
+    }
+  }
+  
+  return null;
+}
+```
+
+**Key Points**:
+- Use `process.env.PATH` to access PATH variable
+- Use `path.delimiter` for OS-agnostic path splitting (`:` or `;`)
+- Use `fs.existsSync()` to check file existence
+- Use `fs.accessSync(path, fs.constants.X_OK)` to check execute permissions
+- Skip files without execute permissions
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`
 
 ```javascript
 const readline = require("readline");
+const fs = require("fs");
+const path = require("path");
 
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
 });
+
+// Helper function to find executable in PATH
+function findExecutable(command) {
+  const pathEnv = process.env.PATH || "";
+  const directories = pathEnv.split(path.delimiter);
+  
+  for (const dir of directories) {
+    const fullPath = path.join(dir, command);
+    
+    try {
+      if (fs.existsSync(fullPath)) {
+        fs.accessSync(fullPath, fs.constants.X_OK);
+        return fullPath;
+      }
+    } catch (err) {
+      continue;
+    }
+  }
+  
+  return null;
+}
 
 function repl() {
   rl.question("$ ", (command) => {
@@ -173,6 +258,26 @@ function repl() {
     if (command.startsWith("echo ")) {
       const args = command.slice(5);
       console.log(args);
+      repl();
+      return;
+    }
+    
+    // Handle type builtin
+    if (command.startsWith("type ")) {
+      const arg = command.slice(5).trim();
+      const builtins = ["echo", "exit", "type"];
+      
+      if (builtins.includes(arg)) {
+        console.log(`${arg} is a shell builtin`);
+      } else {
+        const executablePath = findExecutable(arg);
+        if (executablePath) {
+          console.log(`${arg} is ${executablePath}`);
+        } else {
+          console.log(`${arg}: not found`);
+        }
+      }
+      
       repl();
       return;
     }
@@ -191,11 +296,9 @@ repl();
 
 ## Next Stages (To Be Implemented)
 
+- [ ] Execute external programs
 - [ ] Implement `pwd` builtin (print working directory)
 - [ ] Implement `cd` builtin (change directory)
-- [ ] Implement `type` builtin (identify command type)
-- [ ] Execute external programs
-- [ ] Handle $PATH for finding executables
 - [ ] Implement piping
 - [ ] Implement redirection
 - [ ] Add command history
@@ -218,6 +321,17 @@ A **Read-Eval-Print Loop** is an interactive programming environment that:
 
 ### Why Some Commands Must Be Builtins
 Commands like `exit` and `cd` must be builtins because they need to affect the shell's own process (exit the shell, change the shell's working directory).
+
+### PATH Environment Variable
+- **Purpose**: Tells the shell where to look for executable programs
+- **Format**: Colon-separated list on Unix (`:`) or semicolon-separated on Windows (`;`)
+- **Search Order**: Shell searches directories from left to right
+- **Execute Permissions**: Files must be marked as executable to run
+- **Node.js APIs**:
+  - `process.env.PATH` - access PATH variable
+  - `path.delimiter` - OS-agnostic path separator
+  - `fs.existsSync()` - check if file exists
+  - `fs.accessSync(path, fs.constants.X_OK)` - check execute permissions
 
 ---
 
