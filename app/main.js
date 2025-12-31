@@ -5,10 +5,12 @@ const rl = readline.createInterface({
   output: process.stdout,
 });
 
+function repl() {
+  rl.question("$ ", (command) => {
+    console.log(`${command}: command not found`);
+    repl(); // Loop back to prompt for next command
+  });
+}
 
-
-// TODO: Uncomment the code below to pass the first stage
-rl.question("$ ", (command) => {
-  console.log(`${command}: command not found`);
-  rl.close();
-});
+// Start the REPL
+repl();
