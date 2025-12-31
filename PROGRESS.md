@@ -1273,6 +1273,71 @@ function completer(line) {
 
 ---
 
+### Stage 22: Multiple Match Completion
+**Goal**: Handle tab completion when multiple executables share a common prefix.
+
+**Multiple Match Behavior**:
+- User types prefix that matches multiple executables
+- First TAB press: Ring bell (indicates multiple matches)
+- Second TAB press:
+  - Print all matches on new line
+  - Matches in alphabetical order
+  - Separated by two spaces
+  - Show prompt again with original input preserved
+
+**Example**:
+```bash
+$ xyz_<TAB>        # First TAB - rings bell
+$ xyz_<TAB>        # Second TAB - shows matches
+xyz_bar  xyz_baz  xyz_quz
+$ xyz_             # Prompt reappears with original input
+```
+
+**Implementation**:
+```javascript
+// Combine all hits, remove duplicates, and sort alphabetically
+const hits = [...new Set([...builtinHits, ...executableHits])].sort();
+
+// If there's exactly one match, add a space at the end
+if (hits.length === 1) {
+  const completion = hits[0] + ' ';
+  return [[completion], line];
+}
+
+// If no matches, ring a bell
+if (hits.length === 0) {
+  process.stdout.write('\x07');
+  return [[], line];
+}
+
+// Return all hits for multiple matches (readline handles double-TAB)
+return [hits, line];
+```
+
+**Key Points**:
+- **Sort alphabetically**: Use `.sort()` on the hits array
+- **Deduplicate first**: Use `Set` before sorting
+- **Let readline handle display**: Node.js readline automatically:
+  - Rings bell on first TAB for multiple matches
+  - Shows all matches on second TAB
+  - Preserves original input after showing matches
+- **Only manually ring bell for zero matches**
+
+**Completion Behavior Summary**:
+| Scenario | First TAB | Second TAB |
+|----------|-----------|------------|
+| One match | Complete with space | - |
+| Multiple matches | Bell 🔔 | Show all matches |
+| No matches | Bell 🔔 | - |
+
+**How readline Handles Multiple Matches**:
+1. First TAB: readline detects multiple completions, rings bell
+2. Second TAB: readline displays all completions in a formatted list
+3. After display: re-shows prompt with original input
+4. Spacing and formatting: handled by readline library
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`

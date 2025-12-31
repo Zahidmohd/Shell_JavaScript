@@ -50,8 +50,8 @@ function completer(line) {
   // Get matches from PATH executables
   const executableHits = getExecutablesFromPath(line);
   
-  // Combine all hits and remove duplicates
-  const hits = [...new Set([...builtinHits, ...executableHits])];
+  // Combine all hits, remove duplicates, and sort alphabetically
+  const hits = [...new Set([...builtinHits, ...executableHits])].sort();
   
   // If there's exactly one match, add a space at the end
   if (hits.length === 1) {
@@ -62,9 +62,10 @@ function completer(line) {
   // If no matches, ring a bell
   if (hits.length === 0) {
     process.stdout.write('\x07');
+    return [[], line];
   }
   
-  // Show all hits if multiple matches or no match
+  // Return all hits for multiple matches (readline handles double-TAB)
   return [hits, line];
 }
 
