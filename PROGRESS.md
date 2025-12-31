@@ -816,6 +816,105 @@ if (outputFile) {
 
 ---
 
+### Stage 17: Implement Error Redirection (`2>`)
+**Goal**: Redirect standard error (stderr) of commands to files using `2>`.
+
+**Error Redirection Rules**:
+- `2>` redirects standard error (stderr) to a file
+- `2` = file descriptor for stderr
+- If file doesn't exist → created
+- If file exists → overwritten
+- Only stderr is redirected, stdout still goes to terminal
+- Can combine with stdout redirection: `command > out.txt 2> err.txt`
+
+**Examples**:
+```bash
+$ cat nonexistent 2> errors.txt
+$ cat errors.txt
+cat: nonexistent: No such file or directory
+
+$ cat existing_file nonexistent 2> errors.txt
+contents of existing file       # stdout on terminal
+$ cat errors.txt
+cat: nonexistent: No such file or directory
+
+$ echo hello 2> errors.txt
+hello                           # stdout on terminal
+$ cat errors.txt
+                                # File is empty (no stderr)
+
+$ cat file1 nonexistent > out.txt 2> err.txt
+$ cat out.txt
+contents of file1               # stdout in out.txt
+$ cat err.txt
+cat: nonexistent: No such file or directory  # stderr in err.txt
+```
+
+**Implementation**:
+
+1. **Parse `2>` redirection**:
+```javascript
+let outputFile = null;
+let errorFile = null;
+
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i];
+  
+  if (arg === '2>') {
+    if (i + 1 < args.length) {
+      errorFile = args[i + 1];
+      i++;
+    }
+  } else if (arg.startsWith('2>')) {
+    errorFile = arg.slice(2);
+  }
+  // ... handle > and 1> as before
+}
+
+return { args: filteredArgs, outputFile, errorFile };
+```
+
+2. **Handle stderr for builtins** (create file even if empty):
+```javascript
+// Create error file if specified (even if empty for builtins)
+if (errorFile) {
+  fs.writeFileSync(errorFile, '');
+}
+```
+
+3. **Handle both stdout and stderr redirection for external programs**:
+```javascript
+if (outputFile || errorFile) {
+  const stdoutFd = outputFile ? fs.openSync(outputFile, 'w') : 'inherit';
+  const stderrFd = errorFile ? fs.openSync(errorFile, 'w') : 'inherit';
+  spawnOptions.stdio = ['inherit', stdoutFd, stderrFd];
+  
+  spawnSync(executablePath, cmdArgs, spawnOptions);
+  
+  if (typeof stdoutFd === 'number') fs.closeSync(stdoutFd);
+  if (typeof stderrFd === 'number') fs.closeSync(stderrFd);
+}
+```
+
+**Key Points**:
+- Parse both `>` (or `1>`) and `2>` operators
+- Open file descriptors for both if specified
+- Use `'inherit'` for streams that aren't redirected
+- `stdio: ['inherit', stdoutFd, stderrFd]` sets stdin, stdout, stderr independently
+- Close all opened file descriptors after command completes
+- Check `typeof fd === 'number'` to know if it's a file descriptor vs `'inherit'`
+
+**Redirection Combinations**:
+| Command | stdout | stderr |
+|---------|--------|--------|
+| `cmd` | terminal | terminal |
+| `cmd > out.txt` | out.txt | terminal |
+| `cmd 2> err.txt` | terminal | err.txt |
+| `cmd > out.txt 2> err.txt` | out.txt | err.txt |
+| `cmd > out.txt 2> out.txt` | out.txt | out.txt (both to same file) |
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`
@@ -1001,8 +1100,7 @@ repl();
 
 ## Next Stages (To Be Implemented)
 
-- [ ] Implement append redirection (`>>`, `1>>`)
-- [ ] Implement error redirection (`2>`, `2>>`)
+- [ ] Implement append redirection (`>>`, `1>>`, `2>>`)
 - [ ] Implement input redirection (`<`)
 - [ ] Implement piping (e.g., `cat file.txt | grep search`)
 - [ ] Implement variable expansion (`$VAR`) in double quotes
@@ -1012,6 +1110,7 @@ repl();
 - [ ] Handle command chaining (`;`, `&&`, `||`)
 - [ ] Support wildcards/globbing (`*`, `?`)
 - [ ] Implement job control (background processes with `&`)
+- [ ] Implement `&>` (redirect both stdout and stderr to same file)
 - [ ] Implement piping
 - [ ] Implement redirection
 - [ ] Add command history

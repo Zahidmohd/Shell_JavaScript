@@ -159,6 +159,11 @@ function repl() {
       }
     };
     
+    // Create error file if specified (even if empty for builtins)
+    if (errorFile) {
+      fs.writeFileSync(errorFile, '');
+    }
+    
     // Handle echo builtin
     if (cmd === "echo") {
       writeOutput(cmdArgs.join(" "));
