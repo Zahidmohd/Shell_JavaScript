@@ -65,7 +65,12 @@ function completer(line) {
     return [[], line];
   }
   
-  // Return all hits for multiple matches (readline handles double-TAB)
+  // If multiple matches, ring a bell (for first TAB press)
+  if (hits.length > 1) {
+    process.stdout.write('\x07');
+  }
+  
+  // Return all hits for multiple matches (readline handles double-TAB display)
   return [hits, line];
 }
 

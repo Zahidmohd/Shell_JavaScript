@@ -1310,18 +1310,23 @@ if (hits.length === 0) {
   return [[], line];
 }
 
-// Return all hits for multiple matches (readline handles double-TAB)
+// If multiple matches, ring a bell (for first TAB press)
+if (hits.length > 1) {
+  process.stdout.write('\x07');
+}
+
+// Return all hits for multiple matches (readline handles double-TAB display)
 return [hits, line];
 ```
 
 **Key Points**:
 - **Sort alphabetically**: Use `.sort()` on the hits array
 - **Deduplicate first**: Use `Set` before sorting
+- **Manually ring bell for multiple matches**: Use `process.stdout.write('\x07')`
 - **Let readline handle display**: Node.js readline automatically:
-  - Rings bell on first TAB for multiple matches
   - Shows all matches on second TAB
   - Preserves original input after showing matches
-- **Only manually ring bell for zero matches**
+- **Ring bell for both zero matches and multiple matches**
 
 **Completion Behavior Summary**:
 | Scenario | First TAB | Second TAB |
