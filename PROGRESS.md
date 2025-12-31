@@ -705,6 +705,117 @@ if (char === '\\' && inDoubleQuote && !inSingleQuote) {
 
 ---
 
+### Stage 16: Implement Output Redirection (`>` and `1>`)
+**Goal**: Redirect standard output of commands to files using `>` or `1>`.
+
+**Output Redirection Rules**:
+- `>` redirects standard output (stdout) to a file
+- `1>` is equivalent to `>` (1 = file descriptor for stdout)
+- If file doesn't exist → created
+- If file exists → overwritten (old contents replaced)
+- Only stdout is redirected, stderr still goes to terminal
+
+**Examples**:
+```bash
+$ echo hello > output.txt
+$ cat output.txt
+hello
+
+$ echo hello 1> file.txt  # Same as >
+$ cat file.txt
+hello
+
+$ cat nonexistent > output.txt
+cat: nonexistent: No such file or directory  # Error on terminal
+$ cat output.txt
+                                              # File is empty (no stdout)
+```
+
+**File Descriptors**:
+- `0` = stdin (standard input)
+- `1` = stdout (standard output)
+- `2` = stderr (standard error)
+- `>` is shorthand for `1>`
+
+**Implementation**:
+
+1. **Parse redirection in `parseCommand`**:
+```javascript
+// After parsing arguments, look for redirection operators
+let outputFile = null;
+const filteredArgs = [];
+
+for (let i = 0; i < args.length; i++) {
+  const arg = args[i];
+  
+  if (arg === '>' || arg === '1>') {
+    // Next argument is the output file
+    if (i + 1 < args.length) {
+      outputFile = args[i + 1];
+      i++; // Skip the filename
+    }
+  } else if (arg.startsWith('>') || arg.startsWith('1>')) {
+    // Handle ">file" or "1>file" (no space)
+    if (arg.startsWith('1>')) {
+      outputFile = arg.slice(2);
+    } else {
+      outputFile = arg.slice(1);
+    }
+  } else {
+    filteredArgs.push(arg);
+  }
+}
+
+return { args: filteredArgs, outputFile };
+```
+
+2. **Handle redirection for builtins**:
+```javascript
+const writeOutput = (text) => {
+  if (outputFile) {
+    fs.writeFileSync(outputFile, text + '\n');
+  } else {
+    console.log(text);
+  }
+};
+
+// Use writeOutput instead of console.log
+if (cmd === "echo") {
+  writeOutput(cmdArgs.join(" "));
+}
+```
+
+3. **Handle redirection for external programs**:
+```javascript
+if (outputFile) {
+  // Redirect stdout to file
+  const fd = fs.openSync(outputFile, 'w');
+  spawnOptions.stdio = ['inherit', fd, 'inherit']; // stdin, stdout, stderr
+  
+  spawnSync(executablePath, cmdArgs, spawnOptions);
+  fs.closeSync(fd);
+} else {
+  spawnOptions.stdio = "inherit";
+  spawnSync(executablePath, cmdArgs, spawnOptions);
+}
+```
+
+**Key Points**:
+- Parse `>` and `1>` as redirection operators, not regular arguments
+- Remove redirection operators and filename from command arguments
+- For builtins: write to file instead of console
+- For external commands: open file descriptor and redirect in `stdio` option
+- `stdio: ['inherit', fd, 'inherit']` means: inherit stdin, redirect stdout to fd, inherit stderr
+- Always close file descriptor after use
+
+**Node.js APIs Used**:
+- `fs.writeFileSync(file, data)` - synchronously write to file (for builtins)
+- `fs.openSync(file, 'w')` - open file for writing, return file descriptor
+- `fs.closeSync(fd)` - close file descriptor
+- `stdio: [stdin, stdout, stderr]` - array form to specify individual file descriptors
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`
@@ -890,12 +1001,12 @@ repl();
 
 ## Next Stages (To Be Implemented)
 
-- [ ] Implement backslash escaping in double quotes (e.g., `\"`, `\\`, `\$`)
+- [ ] Implement append redirection (`>>`, `1>>`)
+- [ ] Implement error redirection (`2>`, `2>>`)
+- [ ] Implement input redirection (`<`)
+- [ ] Implement piping (e.g., `cat file.txt | grep search`)
 - [ ] Implement variable expansion (`$VAR`) in double quotes
 - [ ] Implement command substitution (`` `cmd` ``)
-- [ ] Implement piping (e.g., `cat file.txt | grep search`)
-- [ ] Implement output redirection (e.g., `echo hello > file.txt`)
-- [ ] Implement input redirection (e.g., `cat < file.txt`)
 - [ ] Add command history
 - [ ] Add autocompletion
 - [ ] Handle command chaining (`;`, `&&`, `||`)
@@ -998,10 +1109,13 @@ Commands like `exit` and `cd` **must** be builtins because they need to affect t
     - Works on ANY character: `\n` → `n`, `\ ` → space, `\\` → `\`
   - **Single quotes (`'`)**: Everything literal (no escaping possible)
     - `'\n'` → `\n` (backslash is literal)
+    - `'\\'` → `\\` (backslash is literal)
   - **Double quotes (`"`)**: Most things literal, special handling:
+    - Backslash escaping: Only for `\`, `"`, and `$`
+      - `"\\"` → `\`, `"\""` → `"`, `"\$"` → `$`
+      - Other: `"\n"` → `\n` (both backslash and n kept)
     - Variable expansion (`$VAR`) - future stage
     - Command substitution (`` `cmd` ``) - future stage
-    - Backslash escaping (`\"`, `\\`, `\$`) - future stage
 - **Quote Interaction**: Single quotes inside double quotes are literal, and vice versa
 - **Why It Matters**: Enables file names with spaces, preserving formatting, literal strings, protecting special characters, precise control over interpretation
 

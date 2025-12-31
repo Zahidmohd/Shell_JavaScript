@@ -8,7 +8,7 @@ const rl = readline.createInterface({
   output: process.stdout,
 });
 
-// Parse command line with quote support
+// Parse command line with quote support and redirection
 function parseCommand(commandLine) {
   const args = [];
   let currentArg = '';
@@ -68,7 +68,33 @@ function parseCommand(commandLine) {
     args.push(currentArg);
   }
   
-  return args;
+  // Parse redirection operators
+  let outputFile = null;
+  const filteredArgs = [];
+  
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    
+    // Check for > or 1> redirection
+    if (arg === '>' || arg === '1>') {
+      // Next argument is the output file
+      if (i + 1 < args.length) {
+        outputFile = args[i + 1];
+        i++; // Skip the filename
+      }
+    } else if (arg.startsWith('>') || arg.startsWith('1>')) {
+      // Handle cases like ">file" or "1>file" (no space)
+      if (arg.startsWith('1>')) {
+        outputFile = arg.slice(2);
+      } else {
+        outputFile = arg.slice(1);
+      }
+    } else {
+      filteredArgs.push(arg);
+    }
+  }
+  
+  return { args: filteredArgs, outputFile };
 }
 
 // Helper function to find executable in PATH
@@ -96,8 +122,10 @@ function findExecutable(command) {
 
 function repl() {
   rl.question("$ ", (command) => {
-    // Parse the command line into arguments
-    const args = parseCommand(command);
+    // Parse the command line into arguments and check for redirection
+    const parsed = parseCommand(command);
+    const args = parsed.args;
+    const outputFile = parsed.outputFile;
     
     if (args.length === 0) {
       repl();
@@ -112,9 +140,18 @@ function repl() {
       process.exit(0);
     }
     
+    // Helper function to write output (to file or console)
+    const writeOutput = (text) => {
+      if (outputFile) {
+        fs.writeFileSync(outputFile, text + '\n');
+      } else {
+        console.log(text);
+      }
+    };
+    
     // Handle echo builtin
     if (cmd === "echo") {
-      console.log(cmdArgs.join(" "));
+      writeOutput(cmdArgs.join(" "));
       repl();
       return;
     }
@@ -124,26 +161,27 @@ function repl() {
       const builtins = ["echo", "exit", "type", "pwd", "cd"];
       const arg = cmdArgs[0];
       
+      let output;
       // Check if it's a builtin first
       if (builtins.includes(arg)) {
-        console.log(`${arg} is a shell builtin`);
+        output = `${arg} is a shell builtin`;
       } else {
         // Search for executable in PATH
         const executablePath = findExecutable(arg);
         if (executablePath) {
-          console.log(`${arg} is ${executablePath}`);
+          output = `${arg} is ${executablePath}`;
         } else {
-          console.log(`${arg}: not found`);
+          output = `${arg}: not found`;
         }
       }
-      
+      writeOutput(output);
       repl();
       return;
     }
     
     // Handle pwd builtin
     if (cmd === "pwd") {
-      console.log(process.cwd());
+      writeOutput(process.cwd());
       repl();
       return;
     }
@@ -171,10 +209,21 @@ function repl() {
     const executablePath = findExecutable(cmd);
     if (executablePath) {
       // Execute the external program
-      const result = spawnSync(executablePath, cmdArgs, {
-        stdio: "inherit", // Inherit stdin, stdout, stderr
+      const spawnOptions = {
         argv0: cmd, // Set argv[0] to program name, not full path
-      });
+      };
+      
+      if (outputFile) {
+        // Redirect stdout to file
+        const fd = fs.openSync(outputFile, 'w');
+        spawnOptions.stdio = ['inherit', fd, 'inherit']; // stdin, stdout, stderr
+        
+        spawnSync(executablePath, cmdArgs, spawnOptions);
+        fs.closeSync(fd);
+      } else {
+        spawnOptions.stdio = "inherit";
+        spawnSync(executablePath, cmdArgs, spawnOptions);
+      }
       
       repl();
       return;
