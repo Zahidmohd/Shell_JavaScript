@@ -43,6 +43,21 @@ function getExecutablesFromPath(prefix) {
 // Track last completion input for double-TAB detection
 let lastCompletionInput = '';
 
+// Find longest common prefix of an array of strings
+function longestCommonPrefix(strings) {
+  if (strings.length === 0) return '';
+  if (strings.length === 1) return strings[0];
+  
+  let prefix = strings[0];
+  for (let i = 1; i < strings.length; i++) {
+    while (strings[i].indexOf(prefix) !== 0) {
+      prefix = prefix.slice(0, -1);
+      if (prefix === '') return '';
+    }
+  }
+  return prefix;
+}
+
 // Autocomplete function for builtin commands and executables
 function completer(line) {
   const builtins = ["echo", "exit"];
@@ -68,7 +83,15 @@ function completer(line) {
     return [[], line];
   }
   
-  // Multiple matches - check if this is second TAB press
+  // Multiple matches - find longest common prefix
+  const lcp = longestCommonPrefix(hits);
+  
+  // If LCP is longer than current input, complete to LCP (without space)
+  if (lcp.length > line.length) {
+    return [[lcp], line];
+  }
+  
+  // LCP equals input - check if this is second TAB press
   if (line === lastCompletionInput) {
     // Second TAB - display completions and redraw prompt
     process.stdout.write('\n' + hits.join('  ') + '\n');

@@ -1338,11 +1338,13 @@ function completer(line) {
 **Key Points**:
 - **Sort alphabetically**: Use `.sort()` on the hits array
 - **Deduplicate first**: Use `Set` before sorting
-- **Manually ring bell for multiple matches**: Use `process.stdout.write('\x07')`
-- **Let readline handle display**: Node.js readline automatically:
-  - Shows all matches on second TAB
-  - Preserves original input after showing matches
-- **Ring bell for both zero matches and multiple matches**
+- **Track TAB presses**: Use `lastCompletionInput` to detect double-TAB
+- **Manual display control**: 
+  - First TAB: Ring bell, save input state
+  - Second TAB (same input): Manually write completions, call `rl.prompt(true)`
+- **Prevent readline formatting**: Return `[[], line]` to avoid readline's default display
+- **`rl.prompt(true)`**: The `true` parameter preserves current line content when redrawing
+- **No extra newlines**: Manual control eliminates unwanted spacing
 
 **Completion Behavior Summary**:
 | Scenario | First TAB | Second TAB |
@@ -1351,11 +1353,11 @@ function completer(line) {
 | Multiple matches | Bell 🔔 | Show all matches |
 | No matches | Bell 🔔 | - |
 
-**How readline Handles Multiple Matches**:
-1. First TAB: readline detects multiple completions, rings bell
-2. Second TAB: readline displays all completions in a formatted list
-3. After display: re-shows prompt with original input
-4. Spacing and formatting: handled by readline library
+**How We Handle Multiple Matches** (Manual Control):
+1. First TAB: Detect multiple matches, ring bell, save input state
+2. Second TAB: Detect same input, manually write completions with `\n + hits.join('  ') + \n`
+3. After display: Call `rl.prompt(true)` to redraw prompt preserving input
+4. Return `[[], line]` to prevent readline's default formatting which adds extra newlines
 
 ---
 
