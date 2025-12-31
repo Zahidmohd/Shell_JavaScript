@@ -3,10 +3,55 @@ const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-// Autocomplete function for builtin commands
+// Get all executables from PATH that start with prefix
+function getExecutablesFromPath(prefix) {
+  const pathEnv = process.env.PATH || "";
+  const directories = pathEnv.split(path.delimiter);
+  const executables = new Set(); // Use Set to avoid duplicates
+  
+  for (const dir of directories) {
+    try {
+      // Check if directory exists
+      if (!fs.existsSync(dir)) continue;
+      
+      // Read all files in the directory
+      const files = fs.readdirSync(dir);
+      
+      for (const file of files) {
+        // Check if filename starts with prefix
+        if (file.startsWith(prefix)) {
+          const fullPath = path.join(dir, file);
+          try {
+            // Check if file has execute permissions
+            fs.accessSync(fullPath, fs.constants.X_OK);
+            executables.add(file);
+          } catch (err) {
+            // No execute permissions, skip
+            continue;
+          }
+        }
+      }
+    } catch (err) {
+      // Directory doesn't exist or can't be read, skip
+      continue;
+    }
+  }
+  
+  return Array.from(executables);
+}
+
+// Autocomplete function for builtin commands and executables
 function completer(line) {
   const builtins = ["echo", "exit"];
-  const hits = builtins.filter((c) => c.startsWith(line));
+  
+  // Get matches from builtins
+  const builtinHits = builtins.filter((c) => c.startsWith(line));
+  
+  // Get matches from PATH executables
+  const executableHits = getExecutablesFromPath(line);
+  
+  // Combine all hits
+  const hits = [...builtinHits, ...executableHits];
   
   // If there's exactly one match, add a space at the end
   if (hits.length === 1) {

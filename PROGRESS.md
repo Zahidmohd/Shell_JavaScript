@@ -1045,7 +1045,7 @@ $ exi<TAB>
 $ exit 
 ```
 
-**Implementation**:
+**Implementation** (basic version, improved in Stage 20):
 ```javascript
 // Autocomplete function for builtin commands
 function completer(line) {
@@ -1067,6 +1067,8 @@ const rl = readline.createInterface({
   completer: completer,  // Add completer function
 });
 ```
+
+**Note**: This basic version doesn't ring a bell for invalid completions. That's added in Stage 20.
 
 **How It Works**:
 1. User presses TAB while typing
@@ -1096,6 +1098,178 @@ const rl = readline.createInterface({
 - Complete executable names from PATH
 - Complete file names for arguments
 - Complete directory names for `cd` command
+
+---
+
+### Stage 20: Handle Invalid Completions
+**Goal**: Ring a bell when TAB completion finds no matches.
+
+**Invalid Completion Behavior**:
+- User types command that doesn't match any builtin
+- Presses TAB
+- Shell leaves input unchanged
+- Rings a bell to indicate no valid completions
+
+**The Bell Character**:
+- Character: `\x07` (ASCII BEL)
+- Effect: Produces audible beep or visual flash
+- Depends on terminal settings
+
+**Example**:
+```
+$ xyz<TAB>
+[bell rings]
+$ xyz         # Input unchanged
+```
+
+**Implementation**:
+```javascript
+function completer(line) {
+  const builtins = ["echo", "exit"];
+  const hits = builtins.filter((c) => c.startsWith(line));
+  
+  // If there's exactly one match, add a space at the end
+  if (hits.length === 1) {
+    return [[hits[0] + ' '], line];
+  }
+  
+  // If no matches, ring a bell
+  if (hits.length === 0) {
+    process.stdout.write('\x07');
+  }
+  
+  // Show all hits if multiple matches or no match
+  return [hits, line];
+}
+```
+
+**Key Points**:
+- Check `hits.length === 0` for no matches
+- Print `\x07` directly to stdout
+- Return empty array `[]` to indicate no completions
+- Input remains unchanged (readline handles this)
+
+**Completion Behavior Summary**:
+| Scenario | Example | Action |
+|----------|---------|--------|
+| One match | `ech` + TAB | Complete to `echo ` |
+| Multiple matches | `e` + TAB | Show all options |
+| No matches | `xyz` + TAB | Ring bell, leave unchanged |
+
+**Why Ring a Bell?**:
+- Provides immediate feedback to user
+- Standard shell behavior (Bash, Zsh, etc.)
+- Indicates "no completions available" without error message
+- Doesn't interrupt user's workflow
+
+---
+
+### Stage 21: Tab Completion for PATH Executables
+**Goal**: Extend tab completion to include external executables from PATH.
+
+**Extended Completion Behavior**:
+- Complete builtin commands (`echo`, `exit`)
+- Complete external executables found in PATH directories
+- Single match → complete with trailing space
+- Multiple matches → show all options
+- No matches → ring bell
+
+**Examples**:
+```bash
+$ custom<TAB>
+$ custom_executable 
+
+$ ec<TAB>
+echo                 # If only builtin 'echo' matches
+echo_tool            # If external 'echo_tool' also exists
+$ ec
+```
+
+**Implementation**:
+```javascript
+// Get all executables from PATH that start with prefix
+function getExecutablesFromPath(prefix) {
+  const pathEnv = process.env.PATH || "";
+  const directories = pathEnv.split(path.delimiter);
+  const executables = new Set(); // Use Set to avoid duplicates
+  
+  for (const dir of directories) {
+    try {
+      // Check if directory exists
+      if (!fs.existsSync(dir)) continue;
+      
+      // Read all files in the directory
+      const files = fs.readdirSync(dir);
+      
+      for (const file of files) {
+        // Check if filename starts with prefix
+        if (file.startsWith(prefix)) {
+          const fullPath = path.join(dir, file);
+          try {
+            // Check if file has execute permissions
+            fs.accessSync(fullPath, fs.constants.X_OK);
+            executables.add(file);
+          } catch (err) {
+            // No execute permissions, skip
+            continue;
+          }
+        }
+      }
+    } catch (err) {
+      // Directory doesn't exist or can't be read, skip
+      continue;
+    }
+  }
+  
+  return Array.from(executables);
+}
+
+// Autocomplete function for builtin commands and executables
+function completer(line) {
+  const builtins = ["echo", "exit"];
+  
+  // Get matches from builtins
+  const builtinHits = builtins.filter((c) => c.startsWith(line));
+  
+  // Get matches from PATH executables
+  const executableHits = getExecutablesFromPath(line);
+  
+  // Combine all hits
+  const hits = [...builtinHits, ...executableHits];
+  
+  // If there's exactly one match, add a space at the end
+  if (hits.length === 1) {
+    return [[hits[0] + ' '], line];
+  }
+  
+  // If no matches, ring a bell
+  if (hits.length === 0) {
+    process.stdout.write('\x07');
+  }
+  
+  // Show all hits if multiple matches or no match
+  return [hits, line];
+}
+```
+
+**Key Points**:
+- **Parse PATH**: Split by `path.delimiter` (`:` on Unix, `;` on Windows)
+- **Handle missing directories**: Use try-catch, skip if doesn't exist
+- **Check execute permissions**: Use `fs.accessSync(path, fs.constants.X_OK)`
+- **Avoid duplicates**: Use `Set` in case same executable exists in multiple PATH directories
+- **Combine sources**: Merge builtin and executable matches
+- **Graceful handling**: Skip directories that can't be read
+
+**Performance Considerations**:
+- Reading all PATH directories can be slow with many directories/files
+- Could cache results and invalidate on PATH change
+- For now, simple approach works for typical PATH sizes
+
+**Node.js APIs Used**:
+- `fs.readdirSync(dir)` - read all files in directory synchronously
+- `fs.existsSync(path)` - check if path exists
+- `fs.accessSync(path, mode)` - check file permissions
+- `Set` - avoid duplicate entries
 
 ---
 
@@ -1284,9 +1458,9 @@ repl();
 
 ## Next Stages (To Be Implemented)
 
-- [ ] Extend autocompletion to all builtins
-- [ ] Autocomplete executable names from PATH
-- [ ] Autocomplete file/directory names
+- [ ] Extend autocompletion to all builtins (`pwd`, `cd`, `type`)
+- [ ] Autocomplete file/directory names for arguments
+- [ ] Context-aware completion (e.g., only directories for `cd`)
 - [ ] Implement input redirection (`<`)
 - [ ] Implement piping (e.g., `cat file.txt | grep search`)
 - [ ] Implement variable expansion (`$VAR`) in double quotes
