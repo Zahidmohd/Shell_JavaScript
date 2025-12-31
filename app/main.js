@@ -20,6 +20,21 @@ function repl() {
       return;
     }
     
+    // Handle type builtin
+    if (command.startsWith("type ")) {
+      const arg = command.slice(5).trim(); // Remove "type " prefix
+      const builtins = ["echo", "exit", "type"];
+      
+      if (builtins.includes(arg)) {
+        console.log(`${arg} is a shell builtin`);
+      } else {
+        console.log(`${arg}: not found`);
+      }
+      
+      repl();
+      return;
+    }
+    
     console.log(`${command}: command not found`);
     repl(); // Loop back to prompt for next command
   });
