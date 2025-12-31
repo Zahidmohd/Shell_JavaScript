@@ -499,6 +499,11 @@ function repl() {
     
     // Handle exit builtin
     if (cmd === "exit") {
+      // Save history to HISTFILE before exiting
+      if (process.env.HISTFILE) {
+        const content = commandHistory.join('\n') + '\n';
+        fs.writeFileSync(process.env.HISTFILE, content, 'utf8');
+      }
       process.exit(0);
     }
     
