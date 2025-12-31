@@ -1071,6 +1071,32 @@ Commands like `exit` and `cd` **must** be builtins because they need to affect t
   - Throws error if directory doesn't exist or lacks permissions
 - **Error Handling**: Use try-catch to gracefully handle invalid paths
 
+### I/O Redirection
+- **What**: Changing where a program's input comes from or output goes to
+- **Standard Streams**:
+  - **stdin (0)**: Standard input - where program reads from (default: keyboard)
+  - **stdout (1)**: Standard output - where program writes normal output (default: terminal)
+  - **stderr (2)**: Standard error - where program writes error messages (default: terminal)
+- **Output Redirection**:
+  - `>` or `1>` - redirect stdout to file (overwrite)
+  - `>>` or `1>>` - redirect stdout to file (append)
+  - `2>` - redirect stderr to file (overwrite)
+  - `2>>` - redirect stderr to file (append)
+  - `&>` - redirect both stdout and stderr to file
+- **Input Redirection**:
+  - `<` - redirect stdin from file
+- **Why Separate stdout and stderr**:
+  - Allows filtering normal output vs errors
+  - Example: `command > output.txt` shows errors on screen, saves output to file
+- **File Descriptors**: Numbers that identify open files
+  - Programs inherit 0, 1, 2 from parent process
+  - Shell can change where these point before running programs
+- **Node.js Implementation**:
+  - `fs.openSync()` - open file, get file descriptor
+  - `stdio` option in `spawnSync()` - array of [stdin, stdout, stderr]
+  - `'inherit'` - use parent's stream
+  - file descriptor number - redirect to that file
+
 ### Environment Variables
 - **What**: Key-value pairs that store configuration and system information
 - **Purpose**: Pass information to programs, configure behavior, store paths

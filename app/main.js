@@ -70,31 +70,40 @@ function parseCommand(commandLine) {
   
   // Parse redirection operators
   let outputFile = null;
+  let errorFile = null;
   const filteredArgs = [];
   
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     
-    // Check for > or 1> redirection
+    // Check for > or 1> redirection (stdout)
     if (arg === '>' || arg === '1>') {
       // Next argument is the output file
       if (i + 1 < args.length) {
         outputFile = args[i + 1];
         i++; // Skip the filename
       }
-    } else if (arg.startsWith('>') || arg.startsWith('1>')) {
-      // Handle cases like ">file" or "1>file" (no space)
-      if (arg.startsWith('1>')) {
-        outputFile = arg.slice(2);
-      } else {
-        outputFile = arg.slice(1);
+    } else if (arg === '2>') {
+      // Next argument is the error file (stderr)
+      if (i + 1 < args.length) {
+        errorFile = args[i + 1];
+        i++; // Skip the filename
       }
+    } else if (arg.startsWith('2>')) {
+      // Handle "2>file" (no space)
+      errorFile = arg.slice(2);
+    } else if (arg.startsWith('1>')) {
+      // Handle "1>file" (no space)
+      outputFile = arg.slice(2);
+    } else if (arg.startsWith('>') && !arg.startsWith('>>')) {
+      // Handle ">file" (no space)
+      outputFile = arg.slice(1);
     } else {
       filteredArgs.push(arg);
     }
   }
   
-  return { args: filteredArgs, outputFile };
+  return { args: filteredArgs, outputFile, errorFile };
 }
 
 // Helper function to find executable in PATH
@@ -126,6 +135,7 @@ function repl() {
     const parsed = parseCommand(command);
     const args = parsed.args;
     const outputFile = parsed.outputFile;
+    const errorFile = parsed.errorFile;
     
     if (args.length === 0) {
       repl();
@@ -213,13 +223,17 @@ function repl() {
         argv0: cmd, // Set argv[0] to program name, not full path
       };
       
-      if (outputFile) {
-        // Redirect stdout to file
-        const fd = fs.openSync(outputFile, 'w');
-        spawnOptions.stdio = ['inherit', fd, 'inherit']; // stdin, stdout, stderr
+      // Handle I/O redirection
+      if (outputFile || errorFile) {
+        const stdoutFd = outputFile ? fs.openSync(outputFile, 'w') : 'inherit';
+        const stderrFd = errorFile ? fs.openSync(errorFile, 'w') : 'inherit';
+        spawnOptions.stdio = ['inherit', stdoutFd, stderrFd]; // stdin, stdout, stderr
         
         spawnSync(executablePath, cmdArgs, spawnOptions);
-        fs.closeSync(fd);
+        
+        // Close file descriptors if they were opened
+        if (typeof stdoutFd === 'number') fs.closeSync(stdoutFd);
+        if (typeof stderrFd === 'number') fs.closeSync(stderrFd);
       } else {
         spawnOptions.stdio = "inherit";
         spawnSync(executablePath, cmdArgs, spawnOptions);
