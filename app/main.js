@@ -77,7 +77,12 @@ function repl() {
     
     // Handle cd builtin
     if (command.startsWith("cd ")) {
-      const dir = command.slice(3).trim(); // Remove "cd " prefix
+      let dir = command.slice(3).trim(); // Remove "cd " prefix
+      
+      // Handle ~ (home directory)
+      if (dir === "~") {
+        dir = process.env.HOME;
+      }
       
       try {
         process.chdir(dir);

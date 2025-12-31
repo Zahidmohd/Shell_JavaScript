@@ -306,19 +306,18 @@ if (command === "pwd") {
 
 ---
 
-### Stage 10: Implement `cd` Builtin (Absolute Paths)
-**Goal**: Change the current working directory using absolute paths.
+### Stage 10: Implement `cd` Builtin (Absolute and Relative Paths)
+**Goal**: Change the current working directory using absolute and relative paths.
 
 **The cd Command**:
 - Stands for "change directory"
 - Changes the shell's current working directory
 - Must be a builtin (affects the shell's own process)
-- This stage focuses on absolute paths (starting with `/`)
 
-**Path Types** (for future stages):
+**Path Types Supported**:
 - **Absolute paths**: Start with `/` (e.g., `/usr/local/bin`)
-- **Relative paths**: Like `./`, `../`, `./dir`
-- **Home directory**: `~` represents user's home directory
+- **Relative paths**: Like `./`, `../`, `./dir` (automatically handled by `process.chdir()`)
+- **Home directory**: `~` (handled in Stage 11)
 
 **Handling Absolute Paths**:
 1. If directory exists → change to it
@@ -363,6 +362,67 @@ if (command.startsWith("cd ")) {
 **Node.js APIs Used**:
 - `process.chdir(directory)` - changes the current working directory
 - Throws error if directory doesn't exist or can't be accessed
+
+---
+
+### Stage 11: Extend `cd` to Handle Home Directory (`~`)
+**Goal**: Support the `~` character to navigate to the home directory.
+
+**The ~ Character**:
+- Shorthand for the user's home directory
+- Specified by the `HOME` environment variable
+- Convenient way to quickly return home from anywhere
+
+**How It Works**:
+1. User types `cd ~`
+2. Shell reads `HOME` environment variable
+3. Changes to that directory
+
+**Example**:
+```
+$ pwd
+/usr/local/bin
+$ cd ~
+$ pwd
+/home/user
+$ cd /var/log
+$ pwd
+/var/log
+$ cd ~
+$ pwd
+/home/user
+```
+
+**Implementation**:
+```javascript
+if (command.startsWith("cd ")) {
+  let dir = command.slice(3).trim();
+  
+  // Handle ~ (home directory)
+  if (dir === "~") {
+    dir = process.env.HOME;
+  }
+  
+  try {
+    process.chdir(dir);
+  } catch (err) {
+    console.log(`cd: ${dir}: No such file or directory`);
+  }
+  
+  repl();
+  return;
+}
+```
+
+**Key Points**:
+- Check if directory is exactly `~`
+- Replace with value from `process.env.HOME`
+- Then proceed with normal directory change
+- Works with error handling from previous stage
+
+**Node.js APIs Used**:
+- `process.env.HOME` - accesses the HOME environment variable
+- Contains the absolute path to user's home directory
 
 ---
 
@@ -446,7 +506,12 @@ function repl() {
     
     // Handle cd builtin
     if (command.startsWith("cd ")) {
-      const dir = command.slice(3).trim();
+      let dir = command.slice(3).trim();
+      
+      // Handle ~ (home directory)
+      if (dir === "~") {
+        dir = process.env.HOME;
+      }
       
       try {
         process.chdir(dir);
@@ -489,8 +554,13 @@ repl();
 
 ## Next Stages (To Be Implemented)
 
-- [ ] Extend `cd` to handle relative paths (`.`, `..`, `./dir`)
-- [ ] Extend `cd` to handle home directory (`~`)
+- [ ] Implement piping (e.g., `cat file.txt | grep search`)
+- [ ] Implement output redirection (e.g., `echo hello > file.txt`)
+- [ ] Implement input redirection (e.g., `cat < file.txt`)
+- [ ] Add command history
+- [ ] Add autocompletion
+- [ ] Support quoted strings in commands
+- [ ] Handle command chaining (`;`, `&&`, `||`)
 - [ ] Implement piping
 - [ ] Implement redirection
 - [ ] Add command history
@@ -549,6 +619,18 @@ Commands like `exit` and `cd` **must** be builtins because they need to affect t
   - `process.chdir(path)` - changes current working directory
   - Throws error if directory doesn't exist or lacks permissions
 - **Error Handling**: Use try-catch to gracefully handle invalid paths
+
+### Environment Variables
+- **What**: Key-value pairs that store configuration and system information
+- **Purpose**: Pass information to programs, configure behavior, store paths
+- **Common Variables**:
+  - `PATH` - directories to search for executables
+  - `HOME` - user's home directory path
+  - `USER` - current username
+  - `SHELL` - path to current shell
+- **Node.js API**: `process.env` - object containing all environment variables
+- **Usage**: `process.env.HOME`, `process.env.PATH`, etc.
+- **Shell Expansion**: Shells often expand `~` to `$HOME` automatically
 
 ---
 
