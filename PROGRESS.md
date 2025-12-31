@@ -502,6 +502,81 @@ Instead of parsing each command differently with `slice()` and `split()`, we now
 
 ---
 
+### Stage 13: Implement Double Quote Support
+**Goal**: Parse commands with double quotes to preserve spaces and handle most characters literally.
+
+**Double Quotes Behavior**:
+- Most characters inside double quotes are treated literally
+- Consecutive whitespace is preserved (not collapsed)
+- Adjacent quoted strings are concatenated
+- Single quotes inside double quotes are literal
+- (Variable expansion with `$` and escaping with `\` will be handled in later stages)
+
+**Examples**:
+| Command | Output | Explanation |
+|---------|--------|-------------|
+| `echo "hello    world"` | `hello    world` | Multiple spaces preserved |
+| `echo "hello""world"` | `helloworld` | Adjacent strings concatenated |
+| `echo "hello" "world"` | `hello world` | Separate arguments |
+| `echo "shell's test"` | `shell's test` | Single quotes inside are literal |
+| `cat "/tmp/file name"` | (file content) | File names with spaces work |
+
+**Difference from Single Quotes**:
+- Single quotes: Everything is literal (no exceptions)
+- Double quotes: Most things literal, but allow `$` expansion and `\` escaping (future stages)
+
+**Implementation**:
+```javascript
+function parseCommand(commandLine) {
+  const args = [];
+  let currentArg = '';
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  
+  for (let i = 0; i < commandLine.length; i++) {
+    const char = commandLine[i];
+    
+    if (char === "'" && !inDoubleQuote) {
+      // Toggle single quote (only if not in double quote)
+      inSingleQuote = !inSingleQuote;
+    } else if (char === '"' && !inSingleQuote) {
+      // Toggle double quote (only if not in single quote)
+      inDoubleQuote = !inDoubleQuote;
+    } else if (char === ' ' && !inSingleQuote && !inDoubleQuote) {
+      // Space outside quotes - separator
+      if (currentArg.length > 0) {
+        args.push(currentArg);
+        currentArg = '';
+      }
+    } else {
+      // Regular character or space inside quotes
+      currentArg += char;
+    }
+  }
+  
+  if (currentArg.length > 0) {
+    args.push(currentArg);
+  }
+  
+  return args;
+}
+```
+
+**Key Changes**:
+- Added `inDoubleQuote` state variable
+- Double quotes toggle quote state (only when not in single quotes)
+- Single quotes toggle quote state (only when not in double quotes)
+- Spaces are separators only when outside both quote types
+- Both quote types strip the quote characters from final output
+
+**Quote Interaction Rules**:
+- Inside single quotes: double quotes are literal
+- Inside double quotes: single quotes are literal
+- Example: `echo "it's"` → `it's`
+- Example: `echo '"hello"'` → `"hello"`
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`
@@ -522,15 +597,16 @@ function parseCommand(commandLine) {
   const args = [];
   let currentArg = '';
   let inSingleQuote = false;
+  let inDoubleQuote = false;
   
   for (let i = 0; i < commandLine.length; i++) {
     const char = commandLine[i];
     
-    if (char === "'" && !inSingleQuote) {
-      inSingleQuote = true;
-    } else if (char === "'" && inSingleQuote) {
-      inSingleQuote = false;
-    } else if (char === ' ' && !inSingleQuote) {
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+    } else if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+    } else if (char === ' ' && !inSingleQuote && !inDoubleQuote) {
       if (currentArg.length > 0) {
         args.push(currentArg);
         currentArg = '';
@@ -663,8 +739,9 @@ repl();
 
 ## Next Stages (To Be Implemented)
 
-- [ ] Implement double quote support (with variable expansion)
-- [ ] Implement backslash escaping
+- [ ] Implement backslash escaping in double quotes
+- [ ] Implement variable expansion (`$VAR`) in double quotes
+- [ ] Implement command substitution (`` `cmd` ``)
 - [ ] Implement piping (e.g., `cat file.txt | grep search`)
 - [ ] Implement output redirection (e.g., `echo hello > file.txt`)
 - [ ] Implement input redirection (e.g., `cat < file.txt`)
@@ -749,19 +826,26 @@ Commands like `exit` and `cd` **must** be builtins because they need to affect t
 - **Simple Approach**: Split by spaces - fails with quoted strings containing spaces
 - **Proper Approach**: Character-by-character parsing with state tracking
 - **State Machine**:
-  - Track whether we're inside quotes
+  - Track whether we're inside single or double quotes
   - Spaces inside quotes → part of argument
   - Spaces outside quotes → argument separator
   - Quote characters → removed from final arguments
+  - Quotes inside quotes → treated as literal characters
 - **Edge Cases**:
   - Empty quotes: `echo ''world` → `world`
   - Adjacent quotes: `'hello''world'` → `helloworld`
   - Consecutive spaces: `echo  hello` → `hello` (collapsed)
   - Spaces in quotes: `echo 'hello  world'` → `hello  world` (preserved)
+  - Mixed quotes: `echo "it's"` → `it's`
+  - Nested quotes: `echo '"hello"'` → `"hello"`
 - **Single vs Double Quotes**:
-  - Single quotes: everything literal (no expansion)
-  - Double quotes: allow variable expansion (`$VAR`), command substitution
-- **Why It Matters**: Enables file names with spaces, preserving formatting, literal strings
+  - Single quotes (`'`): everything literal (no expansion, no escaping)
+  - Double quotes (`"`): most things literal, but allow:
+    - Variable expansion (`$VAR`) - future stage
+    - Command substitution (`` `cmd` ``) - future stage
+    - Backslash escaping (`\`) - future stage
+  - Quote Interaction: Single quotes inside double quotes are literal, and vice versa
+- **Why It Matters**: Enables file names with spaces, preserving formatting, literal strings, protecting special characters
 
 ---
 

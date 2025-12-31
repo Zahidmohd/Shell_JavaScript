@@ -13,17 +13,18 @@ function parseCommand(commandLine) {
   const args = [];
   let currentArg = '';
   let inSingleQuote = false;
+  let inDoubleQuote = false;
   
   for (let i = 0; i < commandLine.length; i++) {
     const char = commandLine[i];
     
-    if (char === "'" && !inSingleQuote) {
-      // Start single quote
-      inSingleQuote = true;
-    } else if (char === "'" && inSingleQuote) {
-      // End single quote
-      inSingleQuote = false;
-    } else if (char === ' ' && !inSingleQuote) {
+    if (char === "'" && !inDoubleQuote) {
+      // Toggle single quote (only if not in double quote)
+      inSingleQuote = !inSingleQuote;
+    } else if (char === '"' && !inSingleQuote) {
+      // Toggle double quote (only if not in single quote)
+      inDoubleQuote = !inDoubleQuote;
+    } else if (char === ' ' && !inSingleQuote && !inDoubleQuote) {
       // Space outside quotes - separator
       if (currentArg.length > 0) {
         args.push(currentArg);
