@@ -49,7 +49,7 @@ function repl() {
     // Handle type builtin
     if (command.startsWith("type ")) {
       const arg = command.slice(5).trim(); // Remove "type " prefix
-      const builtins = ["echo", "exit", "type", "pwd"];
+      const builtins = ["echo", "exit", "type", "pwd", "cd"];
       
       // Check if it's a builtin first
       if (builtins.includes(arg)) {
@@ -71,6 +71,20 @@ function repl() {
     // Handle pwd builtin
     if (command === "pwd") {
       console.log(process.cwd());
+      repl();
+      return;
+    }
+    
+    // Handle cd builtin
+    if (command.startsWith("cd ")) {
+      const dir = command.slice(3).trim(); // Remove "cd " prefix
+      
+      try {
+        process.chdir(dir);
+      } catch (err) {
+        console.log(`cd: ${dir}: No such file or directory`);
+      }
+      
       repl();
       return;
     }

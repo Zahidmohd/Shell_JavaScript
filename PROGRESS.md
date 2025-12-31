@@ -306,6 +306,66 @@ if (command === "pwd") {
 
 ---
 
+### Stage 10: Implement `cd` Builtin (Absolute Paths)
+**Goal**: Change the current working directory using absolute paths.
+
+**The cd Command**:
+- Stands for "change directory"
+- Changes the shell's current working directory
+- Must be a builtin (affects the shell's own process)
+- This stage focuses on absolute paths (starting with `/`)
+
+**Path Types** (for future stages):
+- **Absolute paths**: Start with `/` (e.g., `/usr/local/bin`)
+- **Relative paths**: Like `./`, `../`, `./dir`
+- **Home directory**: `~` represents user's home directory
+
+**Handling Absolute Paths**:
+1. If directory exists → change to it
+2. If directory doesn't exist → print error and stay in current directory
+
+**Example**:
+```
+$ pwd
+/home/user
+$ cd /usr/local/bin
+$ pwd
+/usr/local/bin
+$ cd /does_not_exist
+cd: /does_not_exist: No such file or directory
+$ pwd
+/usr/local/bin
+```
+
+**Implementation**:
+```javascript
+if (command.startsWith("cd ")) {
+  const dir = command.slice(3).trim();
+  
+  try {
+    process.chdir(dir);
+  } catch (err) {
+    console.log(`cd: ${dir}: No such file or directory`);
+  }
+  
+  repl();
+  return;
+}
+```
+
+**Key Points**:
+- Use `process.chdir()` to change directory
+- Wrap in try-catch to handle errors gracefully
+- If error occurs, print error message but don't crash
+- Current directory remains unchanged if change fails
+- Must add "cd" to builtins list for `type` command
+
+**Node.js APIs Used**:
+- `process.chdir(directory)` - changes the current working directory
+- Throws error if directory doesn't exist or can't be accessed
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`
@@ -360,7 +420,7 @@ function repl() {
     // Handle type builtin
     if (command.startsWith("type ")) {
       const arg = command.slice(5).trim();
-      const builtins = ["echo", "exit", "type", "pwd"];
+      const builtins = ["echo", "exit", "type", "pwd", "cd"];
       
       if (builtins.includes(arg)) {
         console.log(`${arg} is a shell builtin`);
@@ -380,6 +440,20 @@ function repl() {
     // Handle pwd builtin
     if (command === "pwd") {
       console.log(process.cwd());
+      repl();
+      return;
+    }
+    
+    // Handle cd builtin
+    if (command.startsWith("cd ")) {
+      const dir = command.slice(3).trim();
+      
+      try {
+        process.chdir(dir);
+      } catch (err) {
+        console.log(`cd: ${dir}: No such file or directory`);
+      }
+      
       repl();
       return;
     }
@@ -415,7 +489,8 @@ repl();
 
 ## Next Stages (To Be Implemented)
 
-- [ ] Implement `cd` builtin (change directory)
+- [ ] Extend `cd` to handle relative paths (`.`, `..`, `./dir`)
+- [ ] Extend `cd` to handle home directory (`~`)
 - [ ] Implement piping
 - [ ] Implement redirection
 - [ ] Add command history
@@ -437,7 +512,11 @@ A **Read-Eval-Print Loop** is an interactive programming environment that:
 - **External**: Separate programs the shell must spawn (e.g., `ls`, `cat`, `node`)
 
 ### Why Some Commands Must Be Builtins
-Commands like `exit` and `cd` must be builtins because they need to affect the shell's own process (exit the shell, change the shell's working directory). While `pwd` could technically be an external program, it's commonly implemented as a builtin for efficiency.
+Commands like `exit` and `cd` **must** be builtins because they need to affect the shell's own process:
+- `exit` - terminates the shell process itself
+- `cd` - changes the shell's working directory (if external, would only change child process's directory)
+- `pwd` - could be external, but is a builtin for efficiency
+- `echo`, `type` - builtins for efficiency and consistency
 
 ### PATH Environment Variable
 - **Purpose**: Tells the shell where to look for executable programs
@@ -461,6 +540,15 @@ Commands like `exit` and `cd` must be builtins because they need to affect the s
   - Arguments passed as array to child process
 - **Synchronous vs Asynchronous**: Using `spawnSync()` blocks the shell until program completes
 - **Important**: By default, `argv[0]` would be the full path to the executable. Use `argv0` to set it to just the program name
+
+### Working Directory Management
+- **Current Working Directory (CWD)**: The directory the shell process is "in"
+- **Why cd Must Be a Builtin**: If cd were external, it would only change the child process's directory, not the shell's
+- **Node.js APIs**:
+  - `process.cwd()` - returns current working directory as string
+  - `process.chdir(path)` - changes current working directory
+  - Throws error if directory doesn't exist or lacks permissions
+- **Error Handling**: Use try-catch to gracefully handle invalid paths
 
 ---
 
