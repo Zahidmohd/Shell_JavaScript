@@ -1,7 +1,7 @@
 const readline = require("readline");
 const fs = require("fs");
 const path = require("path");
-const { spawnSync } = require("child_process");
+const { spawnSync, spawn } = require("child_process");
 
 // Get all executables from PATH that start with prefix
 function getExecutablesFromPath(prefix) {
@@ -267,8 +267,75 @@ function findExecutable(command) {
   return null;
 }
 
+// Execute a pipeline of commands
+function executePipeline(commands) {
+  if (commands.length === 0) return;
+  
+  // Parse each command
+  const parsedCommands = commands.map(cmd => parseCommand(cmd.trim()));
+  
+  if (parsedCommands.length === 1) {
+    // No pipeline, handle normally (this shouldn't happen here)
+    return false;
+  }
+  
+  // Create processes for pipeline
+  const processes = [];
+  
+  for (let i = 0; i < parsedCommands.length; i++) {
+    const parsed = parsedCommands[i];
+    const cmd = parsed.args[0];
+    const cmdArgs = parsed.args.slice(1);
+    
+    // Find executable
+    const executablePath = findExecutable(cmd);
+    if (!executablePath) {
+      console.log(`${cmd}: command not found`);
+      return true;
+    }
+    
+    const spawnOptions = {
+      argv0: cmd,
+      stdio: ['pipe', 'pipe', 'inherit'], // stdin, stdout, stderr
+    };
+    
+    // First command: inherit stdin or use 'pipe'
+    if (i === 0) {
+      spawnOptions.stdio[0] = 'inherit';
+    }
+    
+    // Last command: inherit stdout or use 'pipe'
+    if (i === parsedCommands.length - 1) {
+      spawnOptions.stdio[1] = 'inherit';
+    }
+    
+    const proc = spawn(executablePath, cmdArgs, spawnOptions);
+    processes.push(proc);
+    
+    // Connect previous process stdout to current process stdin
+    if (i > 0) {
+      processes[i - 1].stdout.pipe(proc.stdin);
+    }
+  }
+  
+  // Wait for the last process to finish
+  processes[processes.length - 1].on('close', () => {
+    repl();
+  });
+  
+  return true;
+}
+
 function repl() {
   rl.question("$ ", (command) => {
+    // Check for pipeline
+    if (command.includes('|')) {
+      const commands = command.split('|');
+      if (executePipeline(commands)) {
+        return;
+      }
+    }
+    
     // Parse the command line into arguments and check for redirection
     const parsed = parseCommand(command);
     const args = parsed.args;

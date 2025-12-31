@@ -1361,6 +1361,181 @@ function completer(line) {
 
 ---
 
+### Stage 23: Longest Common Prefix (LCP) Completion
+**Goal**: Complete to the longest common prefix when multiple matches exist.
+
+**LCP Completion Behavior**:
+- When multiple matches exist, find their longest common prefix (LCP)
+- If LCP is longer than current input, complete to LCP (without space)
+- Continue completing incrementally as user types more
+- Only add space when exactly one match remains
+
+**Example**:
+```bash
+# Executables: xyz_foo, xyz_foo_bar, xyz_foo_bar_baz
+$ xyz_<TAB>           # LCP = "xyz_foo", complete to it
+$ xyz_foo_<TAB>       # LCP = "xyz_foo_bar", complete to it
+$ xyz_foo_bar_<TAB>   # Only "xyz_foo_bar_baz" matches, add space
+$ xyz_foo_bar_baz 
+```
+
+**Progressive Completion**:
+1. `xyz_` → matches 3, LCP = `xyz_foo` → complete
+2. `xyz_foo_` → matches 2, LCP = `xyz_foo_bar` → complete
+3. `xyz_foo_bar_` → matches 1 → complete with space
+
+**Implementation**:
+```javascript
+// Find longest common prefix of an array of strings
+function longestCommonPrefix(strings) {
+  if (strings.length === 0) return '';
+  if (strings.length === 1) return strings[0];
+  
+  let prefix = strings[0];
+  for (let i = 1; i < strings.length; i++) {
+    while (strings[i].indexOf(prefix) !== 0) {
+      prefix = prefix.slice(0, -1);
+      if (prefix === '') return '';
+    }
+  }
+  return prefix;
+}
+
+function completer(line) {
+  // ... get hits ...
+  
+  // If exactly one match, add space
+  if (hits.length === 1) {
+    return [[hits[0] + ' '], line];
+  }
+  
+  // Multiple matches - find LCP
+  const lcp = longestCommonPrefix(hits);
+  
+  // If LCP is longer than current input, complete to LCP
+  if (lcp.length > line.length) {
+    return [[lcp], line];  // No space - multiple matches still exist
+  }
+  
+  // LCP equals input - handle double-TAB for listing
+  // ... bell and display logic ...
+}
+```
+
+**Key Points**:
+- **LCP Algorithm**: Iteratively reduce prefix until all strings start with it
+- **Progressive completion**: User can keep tabbing through common prefixes
+- **No space until unique**: Only add space when one match remains
+- **Better UX**: Reduces typing for long command names with common prefixes
+
+**Completion Behavior Summary**:
+| Scenario | Action |
+|----------|--------|
+| One match | Complete with space |
+| Multiple, LCP > input | Complete to LCP (no space) |
+| Multiple, LCP = input | First TAB: bell, Second TAB: show all |
+| No matches | Ring bell |
+
+---
+
+### Stage 24: Implement Basic Pipelines
+**Goal**: Connect standard output of one command to standard input of another using `|`.
+
+**Pipeline Basics**:
+- `|` operator connects stdout of left command to stdin of right command
+- Commands run concurrently (not sequentially)
+- Data flows through the pipe in real-time
+- Works with commands like `cat`, `grep`, `wc`, `head`, `tail`
+
+**Examples**:
+```bash
+$ cat file.txt | wc
+       5      10      77
+
+$ tail -f logfile | head -n 5
+line 1
+line 2
+line 3
+line 4
+line 5
+```
+
+**How Pipelines Work**:
+1. Split command by `|` operator
+2. Create a process for each command segment
+3. Connect stdout of command N to stdin of command N+1
+4. First command reads from terminal stdin
+5. Last command writes to terminal stdout
+6. All commands run simultaneously
+
+**Implementation**:
+```javascript
+function executePipeline(commands) {
+  const parsedCommands = commands.map(cmd => parseCommand(cmd.trim()));
+  const processes = [];
+  
+  for (let i = 0; i < parsedCommands.length; i++) {
+    const parsed = parsedCommands[i];
+    const cmd = parsed.args[0];
+    const cmdArgs = parsed.args.slice(1);
+    
+    const executablePath = findExecutable(cmd);
+    
+    const spawnOptions = {
+      argv0: cmd,
+      stdio: ['pipe', 'pipe', 'inherit'],
+    };
+    
+    // First command: inherit stdin
+    if (i === 0) {
+      spawnOptions.stdio[0] = 'inherit';
+    }
+    
+    // Last command: inherit stdout
+    if (i === parsedCommands.length - 1) {
+      spawnOptions.stdio[1] = 'inherit';
+    }
+    
+    const proc = spawn(executablePath, cmdArgs, spawnOptions);
+    processes.push(proc);
+    
+    // Pipe previous stdout to current stdin
+    if (i > 0) {
+      processes[i - 1].stdout.pipe(proc.stdin);
+    }
+  }
+  
+  // Wait for last process to finish
+  processes[processes.length - 1].on('close', () => {
+    repl();
+  });
+}
+```
+
+**Key Points**:
+- **Use `spawn()` not `spawnSync()`**: Async execution allows concurrent processes
+- **Pipe stdio streams**: `process1.stdout.pipe(process2.stdin)`
+- **Configure stdio array**: `['stdin', 'stdout', 'stderr']`
+  - `'inherit'` - use terminal
+  - `'pipe'` - create pipe for connection
+- **First/last special handling**:
+  - First: stdin from terminal
+  - Last: stdout to terminal
+  - Middle: both piped
+- **Wait for completion**: Listen to `'close'` event on last process
+
+**Node.js APIs Used**:
+- `spawn(command, args, options)` - asynchronous process spawning
+- `process.stdout.pipe(destination)` - connect output stream to input
+- `process.on('close', callback)` - handle process completion
+- `stdio: [stdin, stdout, stderr]` - configure file descriptors
+
+**Pipeline vs Sequential**:
+- Pipeline: `cmd1 | cmd2` - run simultaneously, data streams
+- Sequential: `cmd1; cmd2` - run one after another (not implemented yet)
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`
@@ -1546,11 +1721,12 @@ repl();
 
 ## Next Stages (To Be Implemented)
 
+- [ ] Extend pipelines to support more than 2 commands
+- [ ] Combine pipelines with redirections (e.g., `cmd1 | cmd2 > file.txt`)
 - [ ] Extend autocompletion to all builtins (`pwd`, `cd`, `type`)
 - [ ] Autocomplete file/directory names for arguments
 - [ ] Context-aware completion (e.g., only directories for `cd`)
 - [ ] Implement input redirection (`<`)
-- [ ] Implement piping (e.g., `cat file.txt | grep search`)
 - [ ] Implement variable expansion (`$VAR`) in double quotes
 - [ ] Implement command substitution (`` `cmd` ``)
 - [ ] Add command history (up/down arrow navigation)
@@ -1558,6 +1734,8 @@ repl();
 - [ ] Support wildcards/globbing (`*`, `?`)
 - [ ] Implement job control (background processes with `&`)
 - [ ] Implement `&>` and `&>>` (redirect both stdout and stderr to same file)
+- [ ] Handle pipeline errors gracefully
+- [ ] Support process substitution (`<(cmd)`)
 - [ ] Implement piping
 - [ ] Implement redirection
 - [ ] Add command history
