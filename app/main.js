@@ -8,6 +8,41 @@ const rl = readline.createInterface({
   output: process.stdout,
 });
 
+// Parse command line with quote support
+function parseCommand(commandLine) {
+  const args = [];
+  let currentArg = '';
+  let inSingleQuote = false;
+  
+  for (let i = 0; i < commandLine.length; i++) {
+    const char = commandLine[i];
+    
+    if (char === "'" && !inSingleQuote) {
+      // Start single quote
+      inSingleQuote = true;
+    } else if (char === "'" && inSingleQuote) {
+      // End single quote
+      inSingleQuote = false;
+    } else if (char === ' ' && !inSingleQuote) {
+      // Space outside quotes - separator
+      if (currentArg.length > 0) {
+        args.push(currentArg);
+        currentArg = '';
+      }
+    } else {
+      // Regular character or space inside quotes
+      currentArg += char;
+    }
+  }
+  
+  // Don't forget the last argument
+  if (currentArg.length > 0) {
+    args.push(currentArg);
+  }
+  
+  return args;
+}
+
 // Helper function to find executable in PATH
 function findExecutable(command) {
   const pathEnv = process.env.PATH || "";
@@ -33,23 +68,33 @@ function findExecutable(command) {
 
 function repl() {
   rl.question("$ ", (command) => {
+    // Parse the command line into arguments
+    const args = parseCommand(command);
+    
+    if (args.length === 0) {
+      repl();
+      return;
+    }
+    
+    const cmd = args[0];
+    const cmdArgs = args.slice(1);
+    
     // Handle exit builtin
-    if (command === "exit") {
+    if (cmd === "exit") {
       process.exit(0);
     }
     
     // Handle echo builtin
-    if (command.startsWith("echo ")) {
-      const args = command.slice(5); // Remove "echo " prefix
-      console.log(args);
+    if (cmd === "echo") {
+      console.log(cmdArgs.join(" "));
       repl();
       return;
     }
     
     // Handle type builtin
-    if (command.startsWith("type ")) {
-      const arg = command.slice(5).trim(); // Remove "type " prefix
+    if (cmd === "type") {
       const builtins = ["echo", "exit", "type", "pwd", "cd"];
+      const arg = cmdArgs[0];
       
       // Check if it's a builtin first
       if (builtins.includes(arg)) {
@@ -69,15 +114,15 @@ function repl() {
     }
     
     // Handle pwd builtin
-    if (command === "pwd") {
+    if (cmd === "pwd") {
       console.log(process.cwd());
       repl();
       return;
     }
     
     // Handle cd builtin
-    if (command.startsWith("cd ")) {
-      let dir = command.slice(3).trim(); // Remove "cd " prefix
+    if (cmd === "cd") {
+      let dir = cmdArgs[0];
       
       // Handle ~ (home directory)
       if (dir === "~") {
@@ -95,16 +140,12 @@ function repl() {
     }
     
     // Try to execute as external program
-    const parts = command.split(" ");
-    const programName = parts[0];
-    const args = parts.slice(1);
-    
-    const executablePath = findExecutable(programName);
+    const executablePath = findExecutable(cmd);
     if (executablePath) {
       // Execute the external program
-      const result = spawnSync(executablePath, args, {
+      const result = spawnSync(executablePath, cmdArgs, {
         stdio: "inherit", // Inherit stdin, stdout, stderr
-        argv0: programName, // Set argv[0] to program name, not full path
+        argv0: cmd, // Set argv[0] to program name, not full path
       });
       
       repl();
@@ -112,7 +153,7 @@ function repl() {
     }
     
     // Command not found
-    console.log(`${command}: command not found`);
+    console.log(`${cmd}: command not found`);
     repl(); // Loop back to prompt for next command
   });
 }

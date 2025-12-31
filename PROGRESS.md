@@ -426,6 +426,82 @@ if (command.startsWith("cd ")) {
 
 ---
 
+### Stage 12: Implement Single Quote Support
+**Goal**: Parse commands with single quotes to preserve spaces and handle special characters literally.
+
+**Single Quotes Behavior**:
+- Disable all special meaning for characters inside them
+- Every character between single quotes is treated literally
+- Consecutive whitespace is preserved (not collapsed)
+- Adjacent quoted strings are concatenated
+
+**Examples**:
+| Command | Output | Explanation |
+|---------|--------|-------------|
+| `echo 'hello    world'` | `hello    world` | Spaces preserved within quotes |
+| `echo hello    world` | `hello world` | Consecutive spaces collapsed |
+| `echo 'hello''world'` | `helloworld` | Adjacent quoted strings concatenated |
+| `echo hello''world` | `helloworld` | Empty quotes ignored |
+| `cat '/tmp/file name'` | (file content) | File names with spaces work |
+
+**Implementation**:
+```javascript
+function parseCommand(commandLine) {
+  const args = [];
+  let currentArg = '';
+  let inSingleQuote = false;
+  
+  for (let i = 0; i < commandLine.length; i++) {
+    const char = commandLine[i];
+    
+    if (char === "'" && !inSingleQuote) {
+      // Start single quote
+      inSingleQuote = true;
+    } else if (char === "'" && inSingleQuote) {
+      // End single quote
+      inSingleQuote = false;
+    } else if (char === ' ' && !inSingleQuote) {
+      // Space outside quotes - separator
+      if (currentArg.length > 0) {
+        args.push(currentArg);
+        currentArg = '';
+      }
+    } else {
+      // Regular character or space inside quotes
+      currentArg += char;
+    }
+  }
+  
+  // Add last argument
+  if (currentArg.length > 0) {
+    args.push(currentArg);
+  }
+  
+  return args;
+}
+```
+
+**Refactored Command Handling**:
+Instead of parsing each command differently with `slice()` and `split()`, we now:
+1. Parse entire command line into array of arguments
+2. First element is the command name
+3. Remaining elements are arguments
+4. Each builtin uses the parsed arguments
+
+**Key Changes**:
+- `echo` now joins arguments with spaces: `cmdArgs.join(" ")`
+- All commands now work with properly parsed arguments
+- Quotes are stripped from the final arguments
+- Spaces inside quotes are preserved
+
+**Benefits**:
+- File names with spaces work: `cat '/tmp/my file.txt'`
+- Preserves formatting: `echo 'hello    world'`
+- Concatenation: `'hello''world'` → `helloworld`
+- Consistent parsing across all commands
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`
@@ -440,6 +516,36 @@ const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
 });
+
+// Parse command line with quote support
+function parseCommand(commandLine) {
+  const args = [];
+  let currentArg = '';
+  let inSingleQuote = false;
+  
+  for (let i = 0; i < commandLine.length; i++) {
+    const char = commandLine[i];
+    
+    if (char === "'" && !inSingleQuote) {
+      inSingleQuote = true;
+    } else if (char === "'" && inSingleQuote) {
+      inSingleQuote = false;
+    } else if (char === ' ' && !inSingleQuote) {
+      if (currentArg.length > 0) {
+        args.push(currentArg);
+        currentArg = '';
+      }
+    } else {
+      currentArg += char;
+    }
+  }
+  
+  if (currentArg.length > 0) {
+    args.push(currentArg);
+  }
+  
+  return args;
+}
 
 // Helper function to find executable in PATH
 function findExecutable(command) {
@@ -464,23 +570,32 @@ function findExecutable(command) {
 
 function repl() {
   rl.question("$ ", (command) => {
+    const args = parseCommand(command);
+    
+    if (args.length === 0) {
+      repl();
+      return;
+    }
+    
+    const cmd = args[0];
+    const cmdArgs = args.slice(1);
+    
     // Handle exit builtin
-    if (command === "exit") {
+    if (cmd === "exit") {
       process.exit(0);
     }
     
     // Handle echo builtin
-    if (command.startsWith("echo ")) {
-      const args = command.slice(5);
-      console.log(args);
+    if (cmd === "echo") {
+      console.log(cmdArgs.join(" "));
       repl();
       return;
     }
     
     // Handle type builtin
-    if (command.startsWith("type ")) {
-      const arg = command.slice(5).trim();
+    if (cmd === "type") {
       const builtins = ["echo", "exit", "type", "pwd", "cd"];
+      const arg = cmdArgs[0];
       
       if (builtins.includes(arg)) {
         console.log(`${arg} is a shell builtin`);
@@ -498,17 +613,16 @@ function repl() {
     }
     
     // Handle pwd builtin
-    if (command === "pwd") {
+    if (cmd === "pwd") {
       console.log(process.cwd());
       repl();
       return;
     }
     
     // Handle cd builtin
-    if (command.startsWith("cd ")) {
-      let dir = command.slice(3).trim();
+    if (cmd === "cd") {
+      let dir = cmdArgs[0];
       
-      // Handle ~ (home directory)
       if (dir === "~") {
         dir = process.env.HOME;
       }
@@ -524,16 +638,11 @@ function repl() {
     }
     
     // Try to execute as external program
-    const parts = command.split(" ");
-    const programName = parts[0];
-    const args = parts.slice(1);
-    
-    const executablePath = findExecutable(programName);
+    const executablePath = findExecutable(cmd);
     if (executablePath) {
-      // Execute the external program
-      const result = spawnSync(executablePath, args, {
+      const result = spawnSync(executablePath, cmdArgs, {
         stdio: "inherit",
-        argv0: programName,
+        argv0: cmd,
       });
       
       repl();
@@ -541,7 +650,7 @@ function repl() {
     }
     
     // Command not found
-    console.log(`${command}: command not found`);
+    console.log(`${cmd}: command not found`);
     repl();
   });
 }
@@ -554,13 +663,16 @@ repl();
 
 ## Next Stages (To Be Implemented)
 
+- [ ] Implement double quote support (with variable expansion)
+- [ ] Implement backslash escaping
 - [ ] Implement piping (e.g., `cat file.txt | grep search`)
 - [ ] Implement output redirection (e.g., `echo hello > file.txt`)
 - [ ] Implement input redirection (e.g., `cat < file.txt`)
 - [ ] Add command history
 - [ ] Add autocompletion
-- [ ] Support quoted strings in commands
 - [ ] Handle command chaining (`;`, `&&`, `||`)
+- [ ] Support wildcards/globbing (`*`, `?`)
+- [ ] Implement job control (background processes with `&`)
 - [ ] Implement piping
 - [ ] Implement redirection
 - [ ] Add command history
@@ -631,6 +743,25 @@ Commands like `exit` and `cd` **must** be builtins because they need to affect t
 - **Node.js API**: `process.env` - object containing all environment variables
 - **Usage**: `process.env.HOME`, `process.env.PATH`, etc.
 - **Shell Expansion**: Shells often expand `~` to `$HOME` automatically
+
+### Command Line Parsing
+- **Challenge**: Properly tokenizing commands with quotes, spaces, and special characters
+- **Simple Approach**: Split by spaces - fails with quoted strings containing spaces
+- **Proper Approach**: Character-by-character parsing with state tracking
+- **State Machine**:
+  - Track whether we're inside quotes
+  - Spaces inside quotes → part of argument
+  - Spaces outside quotes → argument separator
+  - Quote characters → removed from final arguments
+- **Edge Cases**:
+  - Empty quotes: `echo ''world` → `world`
+  - Adjacent quotes: `'hello''world'` → `helloworld`
+  - Consecutive spaces: `echo  hello` → `hello` (collapsed)
+  - Spaces in quotes: `echo 'hello  world'` → `hello  world` (preserved)
+- **Single vs Double Quotes**:
+  - Single quotes: everything literal (no expansion)
+  - Double quotes: allow variable expansion (`$VAR`), command substitution
+- **Why It Matters**: Enables file names with spaces, preserving formatting, literal strings
 
 ---
 
