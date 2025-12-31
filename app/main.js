@@ -3,9 +3,24 @@ const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
+// Autocomplete function for builtin commands
+function completer(line) {
+  const builtins = ["echo", "exit"];
+  const hits = builtins.filter((c) => c.startsWith(line));
+  
+  // If there's exactly one match, add a space at the end
+  if (hits.length === 1) {
+    return [[hits[0] + ' '], line];
+  }
+  
+  // Show all hits if multiple matches or no match
+  return [hits, line];
+}
+
 const rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
+  completer: completer,
 });
 
 // Parse command line with quote support and redirection

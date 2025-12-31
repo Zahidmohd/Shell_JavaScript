@@ -918,6 +918,187 @@ if (outputFile || errorFile) {
 
 ---
 
+### Stage 18: Implement Append Redirection (`>>`, `1>>`, `2>>`)
+**Goal**: Append output to files instead of overwriting them.
+
+**Append Redirection Rules**:
+- `>>` or `1>>` appends stdout to file (preserves existing content)
+- `2>>` appends stderr to file (preserves existing content)
+- If file doesn't exist → created (same as `>`)
+- If file exists → new output added to end (not overwritten)
+- Can combine: `command >> out.txt 2>> err.txt`
+
+**Difference from `>` and `2>`**:
+| Operator | Overwrites | Appends |
+|----------|------------|---------|
+| `>` or `1>` | Yes | No |
+| `>>` or `1>>` | No | Yes |
+| `2>` | Yes | No |
+| `2>>` | No | Yes |
+
+**Examples**:
+```bash
+$ echo first >> output.txt
+$ echo second >> output.txt
+$ cat output.txt
+first
+second
+
+$ echo Hello 1>> file.txt  # Same as >>
+$ echo World 1>> file.txt
+$ cat file.txt
+Hello
+World
+
+$ echo "List of files: " > list.txt   # Overwrite
+$ ls /tmp >> list.txt                 # Append
+$ cat list.txt
+List of files:
+file1
+file2
+file3
+```
+
+**Implementation**:
+
+1. **Track append vs overwrite mode**:
+```javascript
+let outputFile = null;
+let outputAppend = false;  // Track if append mode
+let errorFile = null;
+let errorAppend = false;   // Track if append mode
+
+// Parse >> before > to avoid confusion
+if (arg === '>>' || arg === '1>>') {
+  outputFile = args[i + 1];
+  outputAppend = true;
+  i++;
+} else if (arg === '2>>') {
+  errorFile = args[i + 1];
+  errorAppend = true;
+  i++;
+}
+// ... then handle > and 2> with append = false
+
+return { args: filteredArgs, outputFile, outputAppend, errorFile, errorAppend };
+```
+
+2. **Use append mode for builtins**:
+```javascript
+const writeOutput = (text) => {
+  if (outputFile) {
+    if (outputAppend) {
+      fs.appendFileSync(outputFile, text + '\n');
+    } else {
+      fs.writeFileSync(outputFile, text + '\n');
+    }
+  } else {
+    console.log(text);
+  }
+};
+```
+
+3. **Use append mode for external programs**:
+```javascript
+const stdoutFd = outputFile ? fs.openSync(outputFile, outputAppend ? 'a' : 'w') : 'inherit';
+const stderrFd = errorFile ? fs.openSync(errorFile, errorAppend ? 'a' : 'w') : 'inherit';
+```
+
+**Key Points**:
+- **Order matters in parsing**: Check `>>` before `>` to avoid matching `>` twice
+- **File open modes**:
+  - `'w'` = write (create/overwrite)
+  - `'a'` = append (create/append)
+- **For builtins**: 
+  - Use `fs.appendFileSync()` for append mode
+  - Use `fs.writeFileSync()` for overwrite mode
+- **For external programs**:
+  - Pass `'a'` or `'w'` flag to `fs.openSync()`
+- **Error file handling**: In append mode, create empty file only if it doesn't exist
+
+**Node.js APIs Used**:
+- `fs.appendFileSync(file, data)` - append data to file (or create if doesn't exist)
+- `fs.openSync(file, 'a')` - open file in append mode
+- `fs.existsSync(file)` - check if file exists (for error file append logic)
+
+---
+
+### Stage 19: Implement Tab Autocompletion
+**Goal**: Autocomplete builtin commands when the user presses TAB.
+
+**Autocompletion Behavior**:
+- User types partial command and presses TAB
+- Shell checks if partial text matches beginning of builtin commands
+- If match found, complete the command
+- Add trailing space after completion so user can type arguments
+
+**Supported Completions**:
+- `ech` + TAB → `echo ` (with space)
+- `exi` + TAB → `exit ` (with space)
+
+**Examples**:
+```
+$ ech<TAB>
+$ echo 
+
+$ exi<TAB>
+$ exit 
+```
+
+**Implementation**:
+```javascript
+// Autocomplete function for builtin commands
+function completer(line) {
+  const builtins = ["echo", "exit"];
+  const hits = builtins.filter((c) => c.startsWith(line));
+  
+  // If there's exactly one match, add a space at the end
+  if (hits.length === 1) {
+    return [[hits[0] + ' '], line];
+  }
+  
+  // Show all hits if multiple matches or no match
+  return [hits, line];
+}
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  completer: completer,  // Add completer function
+});
+```
+
+**How It Works**:
+1. User presses TAB while typing
+2. Readline calls `completer` function with current line
+3. Function filters builtins that start with the typed text
+4. If exactly one match, return it with a trailing space
+5. Readline automatically completes the text
+
+**Node.js readline completer API**:
+- **Function signature**: `completer(line, callback)` or `completer(line)` (sync)
+- **Returns**: `[[completions], substring]`
+  - First element: array of completion strings
+  - Second element: the substring that was matched
+- **Behavior**:
+  - If one completion: replaces line with that completion
+  - If multiple: shows all options to user
+  - If none: no change
+
+**Key Points**:
+- Add space after completion for better UX
+- Filter based on `startsWith()` for prefix matching
+- Return empty array if no matches
+- For this stage, only complete `echo` and `exit`
+
+**Future Enhancements** (not in this stage):
+- Complete all builtins (`pwd`, `cd`, `type`)
+- Complete executable names from PATH
+- Complete file names for arguments
+- Complete directory names for `cd` command
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`
@@ -1103,17 +1284,18 @@ repl();
 
 ## Next Stages (To Be Implemented)
 
-- [ ] Implement append redirection (`>>`, `1>>`, `2>>`)
+- [ ] Extend autocompletion to all builtins
+- [ ] Autocomplete executable names from PATH
+- [ ] Autocomplete file/directory names
 - [ ] Implement input redirection (`<`)
 - [ ] Implement piping (e.g., `cat file.txt | grep search`)
 - [ ] Implement variable expansion (`$VAR`) in double quotes
 - [ ] Implement command substitution (`` `cmd` ``)
-- [ ] Add command history
-- [ ] Add autocompletion
+- [ ] Add command history (up/down arrow navigation)
 - [ ] Handle command chaining (`;`, `&&`, `||`)
 - [ ] Support wildcards/globbing (`*`, `?`)
 - [ ] Implement job control (background processes with `&`)
-- [ ] Implement `&>` (redirect both stdout and stderr to same file)
+- [ ] Implement `&>` and `&>>` (redirect both stdout and stderr to same file)
 - [ ] Implement piping
 - [ ] Implement redirection
 - [ ] Add command history
@@ -1129,6 +1311,36 @@ A **Read-Eval-Print Loop** is an interactive programming environment that:
 - Executes them (evaluates)
 - Returns the result (prints)
 - Repeats the process (loops)
+
+### Node.js readline Module
+- **What**: Built-in module for reading input from readable streams (like stdin)
+- **Use Case**: Building interactive command-line programs and REPLs
+- **Key Features**:
+  - Line-by-line input reading
+  - TAB autocompletion via `completer` function
+  - Command history navigation
+  - Emacs/Vi key bindings
+- **Basic Usage**:
+  ```javascript
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    completer: completionFunction
+  });
+  
+  rl.question("$ ", (answer) => {
+    // Handle answer
+  });
+  ```
+- **Completer Function**:
+  - Called when user presses TAB
+  - Returns `[[completions], substring]`
+  - Can provide command, file, or argument completions
+- **Why Use It**: Instead of raw stdin reading, readline handles:
+  - Cursor movement, line editing
+  - Backspace, delete keys
+  - TAB completion
+  - History management
 
 ### Builtin Commands vs External Programs
 - **Builtins**: Commands executed directly by the shell (e.g., `exit`, `echo`, `cd`)
@@ -1184,17 +1396,26 @@ Commands like `exit` and `cd` **must** be builtins because they need to affect t
   - `>>` or `1>>` - redirect stdout to file (append)
   - `2>` - redirect stderr to file (overwrite)
   - `2>>` - redirect stderr to file (append)
-  - `&>` - redirect both stdout and stderr to file
+  - `&>` - redirect both stdout and stderr to file (overwrite)
+  - `&>>` - redirect both stdout and stderr to file (append)
 - **Input Redirection**:
   - `<` - redirect stdin from file
+- **Overwrite vs Append**:
+  - **Overwrite (`>`, `2>`)**: Creates new file or replaces existing content
+  - **Append (`>>`, `2>>`)**: Creates new file or adds to end of existing content
+  - Both create the file if it doesn't exist
 - **Why Separate stdout and stderr**:
   - Allows filtering normal output vs errors
-  - Example: `command > output.txt` shows errors on screen, saves output to file
+  - Example: `command > output.txt 2> errors.txt` separates output and errors
+  - Example: `command >> log.txt` appends to existing log
 - **File Descriptors**: Numbers that identify open files
   - Programs inherit 0, 1, 2 from parent process
   - Shell can change where these point before running programs
 - **Node.js Implementation**:
-  - `fs.openSync()` - open file, get file descriptor
+  - `fs.openSync(file, 'w')` - open for writing (overwrite)
+  - `fs.openSync(file, 'a')` - open for appending
+  - `fs.writeFileSync()` - write/overwrite file
+  - `fs.appendFileSync()` - append to file
   - `stdio` option in `spawnSync()` - array of [stdin, stdout, stderr]
   - `'inherit'` - use parent's stream
   - file descriptor number - redirect to that file
