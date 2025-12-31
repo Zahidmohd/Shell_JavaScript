@@ -1,6 +1,7 @@
 const readline = require("readline");
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("child_process");
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -67,6 +68,23 @@ function repl() {
       return;
     }
     
+    // Try to execute as external program
+    const parts = command.split(" ");
+    const programName = parts[0];
+    const args = parts.slice(1);
+    
+    const executablePath = findExecutable(programName);
+    if (executablePath) {
+      // Execute the external program
+      const result = spawnSync(executablePath, args, {
+        stdio: "inherit", // Inherit stdin, stdout, stderr
+      });
+      
+      repl();
+      return;
+    }
+    
+    // Command not found
     console.log(`${command}: command not found`);
     repl(); // Loop back to prompt for next command
   });

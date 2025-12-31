@@ -212,6 +212,60 @@ function findExecutable(command) {
 
 ---
 
+### Stage 8: Execute External Programs
+**Goal**: Run external programs found in PATH with their arguments.
+
+**How External Execution Works**:
+When a command isn't a builtin:
+1. Parse the command to extract program name and arguments
+2. Search for the executable in PATH (using `findExecutable()`)
+3. If found, execute it with its arguments
+4. If not found, print `<command>: command not found`
+
+**Example**:
+```
+$ custom_exe arg1 arg2
+Program was passed 3 args (including program name).
+Arg #0 (program name): custom_exe
+Arg #1: arg1
+Arg #2: arg2
+```
+
+**Implementation**:
+```javascript
+// Parse command into program name and arguments
+const parts = command.split(" ");
+const programName = parts[0];
+const args = parts.slice(1);
+
+// Find executable in PATH
+const executablePath = findExecutable(programName);
+if (executablePath) {
+  // Execute with spawnSync
+  const result = spawnSync(executablePath, args, {
+    stdio: "inherit", // Inherit stdin, stdout, stderr
+  });
+  
+  repl();
+  return;
+}
+
+// If not found, show error
+console.log(`${command}: command not found`);
+```
+
+**Key Points**:
+- Use `child_process.spawnSync()` to execute programs synchronously
+- `stdio: "inherit"` passes stdin/stdout/stderr to the child process
+- Arguments are passed as an array (excluding program name)
+- The program's output automatically displays in the shell
+
+**Node.js APIs Used**:
+- `spawnSync(command, args, options)` - synchronously spawn child process
+- `stdio: "inherit"` - child uses parent's stdio streams
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`
@@ -220,6 +274,7 @@ function findExecutable(command) {
 const readline = require("readline");
 const fs = require("fs");
 const path = require("path");
+const { spawnSync } = require("child_process");
 
 const rl = readline.createInterface({
   input: process.stdin,
@@ -282,7 +337,23 @@ function repl() {
       return;
     }
     
-    // Handle invalid commands
+    // Try to execute as external program
+    const parts = command.split(" ");
+    const programName = parts[0];
+    const args = parts.slice(1);
+    
+    const executablePath = findExecutable(programName);
+    if (executablePath) {
+      // Execute the external program
+      const result = spawnSync(executablePath, args, {
+        stdio: "inherit",
+      });
+      
+      repl();
+      return;
+    }
+    
+    // Command not found
     console.log(`${command}: command not found`);
     repl();
   });
@@ -296,7 +367,6 @@ repl();
 
 ## Next Stages (To Be Implemented)
 
-- [ ] Execute external programs
 - [ ] Implement `pwd` builtin (print working directory)
 - [ ] Implement `cd` builtin (change directory)
 - [ ] Implement piping
@@ -332,6 +402,16 @@ Commands like `exit` and `cd` must be builtins because they need to affect the s
   - `path.delimiter` - OS-agnostic path separator
   - `fs.existsSync()` - check if file exists
   - `fs.accessSync(path, fs.constants.X_OK)` - check execute permissions
+
+### Process Spawning
+- **What**: Creating a new process to run an external program
+- **Why**: External programs run in separate processes from the shell
+- **How**: Use OS APIs to spawn child processes
+- **Node.js APIs**:
+  - `child_process.spawnSync()` - synchronously create child process
+  - `stdio: "inherit"` - child inherits parent's input/output streams
+  - Arguments passed as array to child process
+- **Synchronous vs Asynchronous**: Using `spawnSync()` blocks the shell until program completes
 
 ---
 
