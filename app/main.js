@@ -270,6 +270,8 @@ function findExecutable(command) {
 
 // Track command history
 const commandHistory = [];
+// Track the last index written to file (for history -a)
+let lastWrittenIndex = 0;
 
 // Check if command is a builtin
 function isBuiltin(cmd) {
@@ -318,9 +320,27 @@ function executeBuiltin(cmd, cmdArgs) {
         // Write all commands to file with trailing newline
         const content = commandHistory.join('\n') + '\n';
         fs.writeFileSync(filePath, content, 'utf8');
+        lastWrittenIndex = commandHistory.length;
         return '';
       } catch (err) {
         return `history: ${filePath}: cannot write history file\n`;
+      }
+    }
+    
+    // Check for -a flag (append to file)
+    if (cmdArgs[0] === '-a' && cmdArgs[1]) {
+      const filePath = cmdArgs[1];
+      try {
+        // Only append commands since last write
+        const newCommands = commandHistory.slice(lastWrittenIndex);
+        if (newCommands.length > 0) {
+          const content = newCommands.join('\n') + '\n';
+          fs.appendFileSync(filePath, content, 'utf8');
+          lastWrittenIndex = commandHistory.length;
+        }
+        return '';
+      } catch (err) {
+        return `history: ${filePath}: cannot append to history file\n`;
       }
     }
     
@@ -572,8 +592,27 @@ function repl() {
           // Write all commands to file with trailing newline
           const content = commandHistory.join('\n') + '\n';
           fs.writeFileSync(filePath, content, 'utf8');
+          lastWrittenIndex = commandHistory.length;
         } catch (err) {
           console.log(`history: ${filePath}: cannot write history file`);
+        }
+        repl();
+        return;
+      }
+      
+      // Check for -a flag (append to file)
+      if (cmdArgs[0] === '-a' && cmdArgs[1]) {
+        const filePath = cmdArgs[1];
+        try {
+          // Only append commands since last write
+          const newCommands = commandHistory.slice(lastWrittenIndex);
+          if (newCommands.length > 0) {
+            const content = newCommands.join('\n') + '\n';
+            fs.appendFileSync(filePath, content, 'utf8');
+            lastWrittenIndex = commandHistory.length;
+          }
+        } catch (err) {
+          console.log(`history: ${filePath}: cannot append to history file`);
         }
         repl();
         return;

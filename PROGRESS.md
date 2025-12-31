@@ -2339,6 +2339,136 @@ history -w /tmp/my_history.txt
 
 ---
 
+## Stage 26: Command History Append (`history -a`)
+
+### What We Implemented
+Added support for appending new commands from memory to an existing history file using the `history -a <path>` command.
+
+### Key Concepts
+
+#### The `history -a` Command
+- **Purpose**: Append only new commands to an existing history file
+- **Syntax**: `history -a <path_to_history_file>`
+- **Behavior**:
+  - Only appends commands that were executed since the last `history -a` or `history -w`
+  - Appends to the existing file (does not overwrite)
+  - Creates the file if it doesn't exist
+  - Includes the `history -a` command itself
+  - Maintains the trailing newline character
+
+#### Difference from `history -w`
+- **`history -w`**: Writes ALL commands to file (overwrites existing content)
+- **`history -a`**: Appends ONLY NEW commands to file (preserves existing content)
+
+### Code Changes
+
+#### New variable to track written commands:
+```javascript
+// Track command history
+const commandHistory = [];
+// Track the last index written to file (for history -a)
+let lastWrittenIndex = 0;
+```
+
+#### In `executeBuiltin()` function:
+```javascript
+// Check for -w flag (write to file)
+if (cmdArgs[0] === '-w' && cmdArgs[1]) {
+  const filePath = cmdArgs[1];
+  try {
+    // Write all commands to file with trailing newline
+    const content = commandHistory.join('\n') + '\n';
+    fs.writeFileSync(filePath, content, 'utf8');
+    lastWrittenIndex = commandHistory.length;  // <-- Updated to track last write
+    return '';
+  } catch (err) {
+    return `history: ${filePath}: cannot write history file\n`;
+  }
+}
+
+// Check for -a flag (append to file)
+if (cmdArgs[0] === '-a' && cmdArgs[1]) {
+  const filePath = cmdArgs[1];
+  try {
+    // Only append commands since last write
+    const newCommands = commandHistory.slice(lastWrittenIndex);
+    if (newCommands.length > 0) {
+      const content = newCommands.join('\n') + '\n';
+      fs.appendFileSync(filePath, content, 'utf8');
+      lastWrittenIndex = commandHistory.length;
+    }
+    return '';
+  } catch (err) {
+    return `history: ${filePath}: cannot append to history file\n`;
+  }
+}
+```
+
+#### Similar changes in main REPL history handler
+
+### Example Usage
+```bash
+# Assume history file already contains:
+# echo initial_command_1
+# echo initial_command_2
+
+$ echo new_command
+new_command
+$ history -a /tmp/my_history.txt
+$ cat /tmp/my_history.txt
+echo initial_command_1
+echo initial_command_2
+echo new_command
+history -a /tmp/my_history.txt
+
+# Running history -a again with no new commands does nothing
+$ history -a /tmp/my_history.txt
+$ cat /tmp/my_history.txt
+echo initial_command_1
+echo initial_command_2
+echo new_command
+history -a /tmp/my_history.txt
+history -a /tmp/my_history.txt
+
+```
+
+### Technical Details
+
+#### Tracking Written Commands
+- **`lastWrittenIndex`**: Global variable tracking the index of the last command written to file
+- **Initial value**: 0 (no commands written yet)
+- **Updated**: After successful `history -w` or `history -a`
+- **Usage**: Used with `Array.slice(lastWrittenIndex)` to get only new commands
+
+#### Appending to Files in Node.js
+- **`fs.appendFileSync(path, data, encoding)`**: Appends data to a file
+  - Creates the file if it doesn't exist
+  - Preserves existing content (adds to the end)
+  - `encoding: 'utf8'` ensures proper text encoding
+- **`Array.slice(start)`**: Returns array elements from `start` to end
+  - Used to get only new commands since last write
+  - Non-destructive (doesn't modify original array)
+
+#### Smart Appending
+- Only appends if there are new commands (`newCommands.length > 0`)
+- Prevents unnecessary file writes
+- Each append includes a trailing newline
+
+#### Integration with `history -w`
+- Both `-w` and `-a` update `lastWrittenIndex`
+- After `-w`, next `-a` will only append commands executed after the `-w`
+- Maintains consistency across different write operations
+
+### Key Takeaways
+- **Incremental Updates**: Only new commands are appended, not all commands
+- **Efficient**: Avoids rewriting entire history file repeatedly
+- **Stateful**: Tracks which commands have been written using `lastWrittenIndex`
+- **Preserves Content**: Existing file content is maintained
+- **Idempotent**: Running multiple times without new commands is safe
+- **Typical Usage**: Used to continuously update a history file during a session
+
+---
+
 ## Notes
 - Using Node.js `readline` module for input/output
 - `console.log()` automatically adds newline character
