@@ -294,8 +294,10 @@ function executeBuiltin(cmd, cmdArgs) {
     }
     return `${arg}: not found\n`;
   } else if (cmd === 'history') {
+    const limit = cmdArgs[0] ? parseInt(cmdArgs[0]) : commandHistory.length;
+    const startIndex = Math.max(0, commandHistory.length - limit);
     let result = '';
-    for (let i = 0; i < commandHistory.length; i++) {
+    for (let i = startIndex; i < commandHistory.length; i++) {
       result += `    ${i + 1}  ${commandHistory[i]}\n`;
     }
     return result;
@@ -514,7 +516,9 @@ function repl() {
     
     // Handle history builtin
     if (cmd === "history") {
-      for (let i = 0; i < commandHistory.length; i++) {
+      const limit = cmdArgs[0] ? parseInt(cmdArgs[0]) : commandHistory.length;
+      const startIndex = Math.max(0, commandHistory.length - limit);
+      for (let i = startIndex; i < commandHistory.length; i++) {
         console.log(`    ${i + 1}  ${commandHistory[i]}`);
       }
       repl();

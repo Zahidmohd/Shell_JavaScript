@@ -1699,6 +1699,79 @@ function repl() {
 
 ---
 
+### Stage 27: Limit History Entries (`history <n>`)
+**Goal**: Support limiting history output to the last n commands.
+
+**History with Limit**:
+- `history` → show all commands
+- `history <n>` → show last n commands
+- Preserve original line numbers
+
+**Example**:
+```bash
+$ echo hello
+hello
+$ echo world
+world
+$ invalid_command
+invalid_command: command not found
+$ history 2
+    3  invalid_command
+    4  history 2
+```
+
+**Implementation**:
+```javascript
+// In executeBuiltin (for pipelines):
+else if (cmd === 'history') {
+  const limit = cmdArgs[0] ? parseInt(cmdArgs[0]) : commandHistory.length;
+  const startIndex = Math.max(0, commandHistory.length - limit);
+  let result = '';
+  for (let i = startIndex; i < commandHistory.length; i++) {
+    result += `    ${i + 1}  ${commandHistory[i]}\n`;
+  }
+  return result;
+}
+
+// In main REPL:
+if (cmd === "history") {
+  const limit = cmdArgs[0] ? parseInt(cmdArgs[0]) : commandHistory.length;
+  const startIndex = Math.max(0, commandHistory.length - limit);
+  for (let i = startIndex; i < commandHistory.length; i++) {
+    console.log(`    ${i + 1}  ${commandHistory[i]}`);
+  }
+  repl();
+  return;
+}
+```
+
+**Key Points**:
+- **Parse limit**: Use `parseInt(cmdArgs[0])` to get the limit
+- **Calculate start**: `Math.max(0, commandHistory.length - limit)` ensures we don't go negative
+- **Preserve line numbers**: Still use `i + 1` for absolute line numbers
+- **Default behavior**: If no argument, show all history
+
+**Examples**:
+```bash
+$ history      # Show all
+    1  cmd1
+    2  cmd2
+    3  cmd3
+    4  history
+
+$ history 2    # Show last 2
+    3  cmd3
+    4  history 2
+
+$ history 10   # Request more than exists, show all available
+    1  cmd1
+    2  cmd2
+    3  cmd3
+    4  history 10
+```
+
+---
+
 ## Current Code Structure
 
 **File**: `app/main.js`
