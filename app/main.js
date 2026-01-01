@@ -1399,6 +1399,28 @@ rl.question("$ ", (command) => {
       return;
     }
     
+    // Handle alias builtin
+    if (cmd === "alias") {
+      const result = executeBuiltin(cmd, cmdArgs);
+      if (result.output) {
+        process.stdout.write(result.output);
+      }
+      lastExitCode = result.exitCode;
+      repl();
+      return;
+    }
+    
+    // Handle unalias builtin
+    if (cmd === "unalias") {
+      const result = executeBuiltin(cmd, cmdArgs);
+      if (result.output) {
+        process.stdout.write(result.output);
+      }
+      lastExitCode = result.exitCode;
+      repl();
+      return;
+    }
+    
     // Try to execute as external program
     const executablePath = findExecutable(cmd);
     if (executablePath) {

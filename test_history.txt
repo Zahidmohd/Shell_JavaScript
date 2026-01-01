@@ -1,0 +1,19 @@
+echo "Hello World" > test.txt
+cat test.txt | grep "World" | wc -l
+echo {1..5}
+sleep 5 &jobs
+history
+sleep --help
+ls
+grep - Search
+echo "test output" > out1.txt
+cat out1.txt
+echo "line 1" > out2.txt
+echo "line 2" >> out2.txt
+cat out2.txt
+echo -e "5\n3\n8\n1" > numbers.txt
+sort < numbers.txt
+ls | wc -l
+cat file.txt | grep pattern | wc -l
+history
+history -w test_history.txt
