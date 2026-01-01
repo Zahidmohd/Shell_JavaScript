@@ -255,6 +255,179 @@ const rl = readline.createInterface({
   prompt: '$ ',
 });
 
+// Brace expansion functions
+function expandBraces(str) {
+  // Find the first brace pattern
+  const braceMatch = findBracePattern(str);
+  
+  if (!braceMatch) {
+    return [str]; // No braces found, return as-is
+  }
+  
+  const { prefix, pattern, suffix, start, end } = braceMatch;
+  
+  // Expand the brace pattern
+  let expansions = [];
+  
+  // Check if it's a sequence pattern {x..y}
+  const seqMatch = pattern.match(/^(\w+)\.\.(\w+)$/);
+  if (seqMatch) {
+    expansions = expandSequence(seqMatch[1], seqMatch[2]);
+  } else {
+    // It's a comma-separated list {a,b,c}
+    expansions = pattern.split(',');
+  }
+  
+  // Combine prefix + expansion + suffix
+  const results = [];
+  for (const expansion of expansions) {
+    const newStr = prefix + expansion + suffix;
+    // Recursively expand any remaining braces
+    const subExpansions = expandBraces(newStr);
+    results.push(...subExpansions);
+  }
+  
+  return results;
+}
+
+function findBracePattern(str) {
+  // Find the first complete brace pattern, handling nesting
+  let braceDepth = 0;
+  let braceStart = -1;
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    
+    // Handle quotes (braces inside quotes are not expanded)
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      continue;
+    }
+    if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      continue;
+    }
+    
+    if (inSingleQuote || inDoubleQuote) {
+      continue;
+    }
+    
+    if (char === '{') {
+      if (braceDepth === 0) {
+        braceStart = i;
+      }
+      braceDepth++;
+    } else if (char === '}' && braceDepth > 0) {
+      braceDepth--;
+      if (braceDepth === 0) {
+        // Found a complete brace pattern
+        const prefix = str.substring(0, braceStart);
+        const pattern = str.substring(braceStart + 1, i);
+        const suffix = str.substring(i + 1);
+        
+        // Validate the pattern (must contain comma or ..)
+        if (pattern.includes(',') || pattern.includes('..')) {
+          return { prefix, pattern, suffix, start: braceStart, end: i };
+        }
+        // Not a valid brace expansion, continue searching
+        braceStart = -1;
+      }
+    }
+  }
+  
+  return null;
+}
+
+function expandSequence(start, end) {
+  const results = [];
+  
+  // Check if both are numbers
+  const startNum = parseInt(start, 10);
+  const endNum = parseInt(end, 10);
+  
+  if (!isNaN(startNum) && !isNaN(endNum)) {
+    // Numeric sequence
+    const step = startNum <= endNum ? 1 : -1;
+    for (let i = startNum; step > 0 ? i <= endNum : i >= endNum; i += step) {
+      // Preserve leading zeros
+      if (start.length > 1 && start[0] === '0') {
+        results.push(String(i).padStart(start.length, '0'));
+      } else {
+        results.push(String(i));
+      }
+    }
+  } else if (start.length === 1 && end.length === 1) {
+    // Character sequence
+    const startCode = start.charCodeAt(0);
+    const endCode = end.charCodeAt(0);
+    const step = startCode <= endCode ? 1 : -1;
+    
+    for (let i = startCode; step > 0 ? i <= endCode : i >= endCode; i += step) {
+      results.push(String.fromCharCode(i));
+    }
+  } else {
+    // Invalid sequence, return as-is
+    results.push(`${start}..${end}`);
+  }
+  
+  return results;
+}
+
+function expandBracesInCommand(commandLine) {
+  // Split command line by spaces while respecting quotes
+  const tokens = [];
+  let currentToken = '';
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let escaped = false;
+  
+  for (let i = 0; i < commandLine.length; i++) {
+    const char = commandLine[i];
+    
+    if (escaped) {
+      currentToken += char;
+      escaped = false;
+      continue;
+    }
+    
+    if (char === '\\' && !inSingleQuote) {
+      escaped = true;
+      currentToken += char;
+      continue;
+    }
+    
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      currentToken += char;
+    } else if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      currentToken += char;
+    } else if (char === ' ' && !inSingleQuote && !inDoubleQuote) {
+      if (currentToken) {
+        tokens.push(currentToken);
+        currentToken = '';
+      }
+    } else {
+      currentToken += char;
+    }
+  }
+  
+  if (currentToken) {
+    tokens.push(currentToken);
+  }
+  
+  // Expand braces in each token
+  const expandedTokens = [];
+  for (const token of tokens) {
+    const expanded = expandBraces(token);
+    expandedTokens.push(...expanded);
+  }
+  
+  return expandedTokens.join(' ');
+}
+
 // Parse command line with quote support and redirection
 function parseCommand(commandLine) {
   const args = [];
@@ -1025,6 +1198,9 @@ rl.question("$ ", (command) => {
       commandHistory.push(command);
     }
     
+    // Expand braces
+    command = expandBracesInCommand(command);
+    
     // Check for semicolon-separated commands
     if (command.includes(';') && !command.match(/^[^'"]*;[^'"]*$/)) {
       // Has semicolon, need to check if it's outside quotes
@@ -1378,7 +1554,10 @@ function executeCommandsSequentially(commands, index) {
     return;
   }
   
-  const command = commands[index];
+  let command = commands[index];
+  
+  // Expand braces
+  command = expandBracesInCommand(command);
   
   // Check for background job (ends with &)
   let isBackground = command.trim().endsWith('&');
@@ -1475,6 +1654,9 @@ function executeCommandsSequentially(commands, index) {
 // Execute a single command and return exit code
 function executeCommand(command) {
   if (!command.trim()) return 0;
+  
+  // Expand braces
+  command = expandBracesInCommand(command);
   
   // Check for variable assignment (VAR=value)
   const varAssignMatch = command.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
