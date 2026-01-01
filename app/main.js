@@ -4,6 +4,17 @@ const path = require("path");
 const { spawnSync, spawn } = require("child_process");
 const { Readable } = require("stream");
 
+// Constants
+const BUILTIN_COMMANDS = ['echo', 'exit', 'type', 'pwd', 'cd', 'history'];
+
+// Track command history
+const commandHistory = [];
+// Track the last index written to file (for history -a)
+let lastWrittenIndex = 0;
+
+// Track last completion input for double-TAB detection
+let lastCompletionInput = '';
+
 // Get all executables from PATH that start with prefix
 function getExecutablesFromPath(prefix) {
   const pathEnv = process.env.PATH || "";
@@ -41,9 +52,6 @@ function getExecutablesFromPath(prefix) {
   return Array.from(executables);
 }
 
-// Track last completion input for double-TAB detection
-let lastCompletionInput = '';
-
 // Find longest common prefix of an array of strings
 function longestCommonPrefix(strings) {
   if (strings.length === 0) return '';
@@ -75,12 +83,14 @@ function completer(line) {
   // If there's exactly one match, add a space at the end
   if (hits.length === 1) {
     const completion = hits[0] + ' ';
+    lastCompletionInput = '';
     return [[completion], line];
   }
   
   // If no matches, ring a bell
   if (hits.length === 0) {
     process.stdout.write('\x07');
+    lastCompletionInput = '';
     return [[], line];
   }
   
@@ -89,6 +99,7 @@ function completer(line) {
   
   // If LCP is longer than current input, complete to LCP (without space)
   if (lcp.length > line.length) {
+    lastCompletionInput = '';
     return [[lcp], line];
   }
   
@@ -268,17 +279,13 @@ function findExecutable(command) {
   return null;
 }
 
-// Track command history
-const commandHistory = [];
-// Track the last index written to file (for history -a)
-let lastWrittenIndex = 0;
-
 // Check if command is a builtin
 function isBuiltin(cmd) {
-  return ['echo', 'exit', 'type', 'pwd', 'cd', 'history'].includes(cmd);
+  return BUILTIN_COMMANDS.includes(cmd);
 }
 
 // Execute builtin command and return output as string
+// This function is used by pipelines and internally, not by the main REPL
 function executeBuiltin(cmd, cmdArgs) {
   if (cmd === 'echo') {
     return cmdArgs.join(' ') + '\n';
@@ -286,8 +293,7 @@ function executeBuiltin(cmd, cmdArgs) {
     return process.cwd() + '\n';
   } else if (cmd === 'type') {
     const arg = cmdArgs[0];
-    const builtins = ['echo', 'exit', 'type', 'pwd', 'cd', 'history'];
-    if (builtins.includes(arg)) {
+    if (BUILTIN_COMMANDS.includes(arg)) {
       return `${arg} is a shell builtin\n`;
     }
     const executablePath = findExecutable(arg);
@@ -366,13 +372,13 @@ function executeBuiltin(cmd, cmdArgs) {
 
 // Execute a pipeline of commands
 function executePipeline(commands) {
-  if (commands.length === 0) return;
+  if (commands.length === 0) return false;
   
   // Parse each command
   const parsedCommands = commands.map(cmd => parseCommand(cmd.trim()));
   
   if (parsedCommands.length === 1) {
-    // No pipeline, handle normally (this shouldn't happen here)
+    // No pipeline, handle normally
     return false;
   }
   
@@ -412,12 +418,12 @@ function executePipeline(commands) {
         stdio: ['pipe', 'pipe', 'inherit'], // stdin, stdout, stderr
       };
       
-      // First command: inherit stdin or use 'pipe'
+      // First command: inherit stdin
       if (i === 0) {
         spawnOptions.stdio[0] = 'inherit';
       }
       
-      // Last command: inherit stdout or use 'pipe'
+      // Last command: inherit stdout
       if (i === parsedCommands.length - 1) {
         spawnOptions.stdio[1] = 'inherit';
       }
@@ -431,9 +437,6 @@ function executePipeline(commands) {
   for (let i = 1; i < processes.length; i++) {
     if (processes[i - 1].stdout && processes[i].stdin) {
       processes[i - 1].stdout.pipe(processes[i].stdin);
-    } else if (processes[i - 1].stdout && !processes[i].stdin) {
-      // Previous has stdout, current doesn't have stdin (builtin)
-      // Do nothing - builtin doesn't read from stdin in our implementation
     }
   }
   
@@ -466,6 +469,19 @@ function executePipeline(commands) {
   return true;
 }
 
+// Save history to HISTFILE
+function saveHistoryToFile() {
+  if (process.env.HISTFILE) {
+    try {
+      const content = commandHistory.join('\n') + '\n';
+      fs.writeFileSync(process.env.HISTFILE, content, 'utf8');
+    } catch (err) {
+      // Silently ignore errors when saving history
+    }
+  }
+}
+
+// Main REPL function
 function repl() {
   rl.question("$ ", (command) => {
     // Add command to history (if not empty)
@@ -497,155 +513,46 @@ function repl() {
     const cmd = args[0];
     const cmdArgs = args.slice(1);
     
-    // Handle exit builtin
+    // Handle exit builtin (special case - must be in REPL, not in executeBuiltin)
     if (cmd === "exit") {
-      // Save history to HISTFILE before exiting
-      if (process.env.HISTFILE) {
-        const content = commandHistory.join('\n') + '\n';
-        fs.writeFileSync(process.env.HISTFILE, content, 'utf8');
-      }
+      saveHistoryToFile();
       process.exit(0);
     }
     
-    // Helper function to write output (to file or console)
-    const writeOutput = (text) => {
+    // Handle builtins that don't need special REPL treatment
+    if (isBuiltin(cmd)) {
+      // Execute the builtin
+      const output = executeBuiltin(cmd, cmdArgs);
+      
+      // Handle output redirection for builtins
       if (outputFile) {
-        if (outputAppend) {
-          fs.appendFileSync(outputFile, text + '\n');
-        } else {
-          fs.writeFileSync(outputFile, text + '\n');
-        }
-      } else {
-        console.log(text);
-      }
-    };
-    
-    // Create/append error file if specified (even if empty for builtins)
-    if (errorFile) {
-      if (errorAppend) {
-        // Create if doesn't exist, don't modify if exists
-        if (!fs.existsSync(errorFile)) {
-          fs.writeFileSync(errorFile, '');
-        }
-      } else {
-        // Overwrite with empty
-        fs.writeFileSync(errorFile, '');
-      }
-    }
-    
-    // Handle echo builtin
-    if (cmd === "echo") {
-      writeOutput(cmdArgs.join(" "));
-      repl();
-      return;
-    }
-    
-    // Handle type builtin
-    if (cmd === "type") {
-      const builtins = ["echo", "exit", "type", "pwd", "cd", "history"];
-      const arg = cmdArgs[0];
-      
-      let output;
-      // Check if it's a builtin first
-      if (builtins.includes(arg)) {
-        output = `${arg} is a shell builtin`;
-      } else {
-        // Search for executable in PATH
-        const executablePath = findExecutable(arg);
-        if (executablePath) {
-          output = `${arg} is ${executablePath}`;
-        } else {
-          output = `${arg}: not found`;
-        }
-      }
-      writeOutput(output);
-      repl();
-      return;
-    }
-    
-    // Handle pwd builtin
-    if (cmd === "pwd") {
-      writeOutput(process.cwd());
-      repl();
-      return;
-    }
-    
-    // Handle history builtin
-    if (cmd === "history") {
-      // Check for -r flag (read from file)
-      if (cmdArgs[0] === '-r' && cmdArgs[1]) {
-        const filePath = cmdArgs[1];
+        const writeMode = outputAppend ? 'a' : 'w';
         try {
-          const fileContent = fs.readFileSync(filePath, 'utf8');
-          const lines = fileContent.split('\n');
-          for (const line of lines) {
-            if (line.trim()) {
-              commandHistory.push(line);
-            }
+          if (output.endsWith('\n')) {
+            fs.writeFileSync(outputFile, output, { encoding: 'utf8', flag: writeMode });
+          } else {
+            fs.writeFileSync(outputFile, output + '\n', { encoding: 'utf8', flag: writeMode });
           }
         } catch (err) {
-          console.log(`history: ${filePath}: No such file or directory`);
+          // Ignore write errors
         }
-        repl();
-        return;
+      } else {
+        // Print to console (remove trailing newline since print adds one)
+        if (output) {
+          process.stdout.write(output);
+        }
       }
       
-      // Check for -w flag (write to file)
-      if (cmdArgs[0] === '-w' && cmdArgs[1]) {
-        const filePath = cmdArgs[1];
+      // Handle error redirection for builtins (create empty file)
+      if (errorFile) {
+        const writeMode = errorAppend ? 'a' : 'w';
         try {
-          // Write all commands to file with trailing newline
-          const content = commandHistory.join('\n') + '\n';
-          fs.writeFileSync(filePath, content, 'utf8');
-          lastWrittenIndex = commandHistory.length;
-        } catch (err) {
-          console.log(`history: ${filePath}: cannot write history file`);
-        }
-        repl();
-        return;
-      }
-      
-      // Check for -a flag (append to file)
-      if (cmdArgs[0] === '-a' && cmdArgs[1]) {
-        const filePath = cmdArgs[1];
-        try {
-          // Only append commands since last write
-          const newCommands = commandHistory.slice(lastWrittenIndex);
-          if (newCommands.length > 0) {
-            const content = newCommands.join('\n') + '\n';
-            fs.appendFileSync(filePath, content, 'utf8');
-            lastWrittenIndex = commandHistory.length;
+          if (!fs.existsSync(errorFile) || !errorAppend) {
+            fs.writeFileSync(errorFile, '', { encoding: 'utf8', flag: writeMode });
           }
         } catch (err) {
-          console.log(`history: ${filePath}: cannot append to history file`);
+          // Ignore write errors
         }
-        repl();
-        return;
-      }
-      
-      // Normal history display
-      const limit = cmdArgs[0] ? parseInt(cmdArgs[0]) : commandHistory.length;
-      const startIndex = Math.max(0, commandHistory.length - limit);
-      for (let i = startIndex; i < commandHistory.length; i++) {
-        console.log(`    ${i + 1}  ${commandHistory[i]}`);
-      }
-      repl();
-      return;
-    }
-    
-    // Handle cd builtin
-    if (cmd === "cd") {
-      let dir = cmdArgs[0];
-      
-      // Handle ~ (home directory)
-      if (dir === "~") {
-        dir = process.env.HOME;
-      }
-      
-      try {
-        process.chdir(dir);
-      } catch (err) {
-        console.log(`cd: ${dir}: No such file or directory`);
       }
       
       repl();
@@ -682,7 +589,7 @@ function repl() {
     
     // Command not found
     console.log(`${cmd}: command not found`);
-    repl(); // Loop back to prompt for next command
+    repl();
   });
 }
 
