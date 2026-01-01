@@ -4,22 +4,12 @@ const path = require("path");
 const { spawnSync, spawn } = require("child_process");
 const { Readable } = require("stream");
 
-// Constants
-const BUILTIN_COMMANDS = ['echo', 'exit', 'type', 'pwd', 'cd', 'history'];
-
-// Track command history
-const commandHistory = [];
-// Track the last index written to file (for history -a)
-let lastWrittenIndex = 0;
-
-// Track last completion input for double-TAB detection
-let lastCompletionInput = '';
-
 // Get all executables from PATH that start with prefix
 function getExecutablesFromPath(prefix) {
   const pathEnv = process.env.PATH || "";
   const directories = pathEnv.split(path.delimiter);
   const executables = new Set(); // Use Set to avoid duplicates
+  const isWindows = process.platform === 'win32';
   
   for (const dir of directories) {
     try {
@@ -33,13 +23,41 @@ function getExecutablesFromPath(prefix) {
         // Check if filename starts with prefix
         if (file.startsWith(prefix)) {
           const fullPath = path.join(dir, file);
-          try {
-            // Check if file has execute permissions
-            fs.accessSync(fullPath, fs.constants.X_OK);
-            executables.add(file);
-          } catch (err) {
-            // No execute permissions, skip
-            continue;
+          
+          // On Windows, check differently
+          let isExecutable = false;
+          if (isWindows) {
+            // On Windows, ONLY consider files with executable extensions
+            const execExtensions = ['.exe', '.cmd', '.bat', '.com'];
+            const hasExecExt = execExtensions.some(ext => file.toLowerCase().endsWith(ext));
+            isExecutable = hasExecExt && fs.existsSync(fullPath);
+          } else {
+            // On Unix, check execute permissions
+            try {
+              fs.accessSync(fullPath, fs.constants.X_OK);
+              isExecutable = true;
+            } catch (err) {
+              isExecutable = false;
+            }
+          }
+          
+          if (isExecutable) {
+            // On Windows, strip .exe/.cmd/.bat/.com extension for display
+            if (isWindows) {
+              if (file.endsWith('.exe')) {
+                executables.add(file.slice(0, -4));
+              } else if (file.endsWith('.cmd')) {
+                executables.add(file.slice(0, -4));
+              } else if (file.endsWith('.bat')) {
+                executables.add(file.slice(0, -4));
+              } else if (file.endsWith('.com')) {
+                executables.add(file.slice(0, -4));
+              } else {
+                executables.add(file);
+              }
+            } else {
+              executables.add(file);
+            }
           }
         }
       }
@@ -51,6 +69,9 @@ function getExecutablesFromPath(prefix) {
   
   return Array.from(executables);
 }
+
+// Track last completion input for double-TAB detection
+let lastCompletionInput = '';
 
 // Find longest common prefix of an array of strings
 function longestCommonPrefix(strings) {
@@ -67,8 +88,119 @@ function longestCommonPrefix(strings) {
   return prefix;
 }
 
+// Get file/directory completions for path
+function getPathCompletions(inputPath) {
+  try {
+    // Determine directory and prefix
+    let dir, prefix;
+    
+    if (inputPath.includes('/') || inputPath.includes('\\')) {
+      // Path contains directory separator
+      const lastSep = Math.max(inputPath.lastIndexOf('/'), inputPath.lastIndexOf('\\'));
+      dir = inputPath.substring(0, lastSep + 1) || '.';
+      prefix = inputPath.substring(lastSep + 1);
+    } else {
+      // No separator, search in current directory
+      dir = '.';
+      prefix = inputPath;
+    }
+    
+    // Expand ~ to home directory
+    if (dir.startsWith('~')) {
+      dir = dir.replace('~', process.env.HOME || '');
+    }
+    
+    // Read directory contents
+    if (!fs.existsSync(dir)) {
+      return [];
+    }
+    
+    const entries = fs.readdirSync(dir);
+    const matches = [];
+    
+    for (const entry of entries) {
+      if (entry.startsWith(prefix)) {
+        const fullPath = path.join(dir, entry);
+        const stats = fs.statSync(fullPath);
+        
+        // Build completion path
+        let completion;
+        if (inputPath.includes('/') || inputPath.includes('\\')) {
+          const basePath = inputPath.substring(0, inputPath.lastIndexOf('/') >= 0 ? inputPath.lastIndexOf('/') + 1 : inputPath.lastIndexOf('\\') + 1);
+          completion = basePath + entry;
+        } else {
+          completion = entry;
+        }
+        
+        // Add / for directories
+        if (stats.isDirectory()) {
+          completion += '/';
+        }
+        
+        matches.push(completion);
+      }
+    }
+    
+    return matches;
+  } catch (err) {
+    return [];
+  }
+}
+
+// Check if input looks like a path
+function isPathLike(input) {
+  return input.includes('/') || input.includes('\\') || input.startsWith('.') || input.startsWith('~');
+}
+
 // Autocomplete function for builtin commands and executables
 function completer(line) {
+  // Check if we're completing a path
+  const words = line.split(/\s+/);
+  const lastWord = words[words.length - 1];
+  
+  // If we have multiple words (command + arguments) or last word looks like a path
+  // do path completion
+  if (lastWord && (words.length > 1 || isPathLike(lastWord))) {
+    const hits = getPathCompletions(lastWord).sort();
+    
+    if (hits.length === 0) {
+      process.stdout.write('\x07');
+      lastCompletionInput = '';
+      return [[], line];
+    }
+    
+    if (hits.length === 1) {
+      // Single match - replace last word
+      const prefix = words.slice(0, -1).join(' ');
+      const completion = (prefix ? prefix + ' ' : '') + hits[0];
+      lastCompletionInput = '';
+      return [[completion], line];
+    }
+    
+    // Multiple matches
+    const lcp = longestCommonPrefix(hits);
+    const prefix = words.slice(0, -1).join(' ');
+    const fullLcp = (prefix ? prefix + ' ' : '') + lcp;
+    
+    if (lcp.length > lastWord.length) {
+      lastCompletionInput = '';
+      return [[fullLcp], line];
+    }
+    
+    // Show completions on second TAB
+    if (line === lastCompletionInput) {
+      process.stdout.write('\n' + hits.join('  ') + '\n');
+      rl.prompt(true);
+      lastCompletionInput = '';
+      return [[], line];
+    } else {
+      process.stdout.write('\x07');
+      lastCompletionInput = line;
+      return [[], line];
+    }
+  }
+  
+  // Command completion (original behavior)
   const builtins = ["echo", "exit"];
   
   // Get matches from builtins
@@ -83,14 +215,12 @@ function completer(line) {
   // If there's exactly one match, add a space at the end
   if (hits.length === 1) {
     const completion = hits[0] + ' ';
-    lastCompletionInput = '';
     return [[completion], line];
   }
   
   // If no matches, ring a bell
   if (hits.length === 0) {
     process.stdout.write('\x07');
-    lastCompletionInput = '';
     return [[], line];
   }
   
@@ -99,7 +229,7 @@ function completer(line) {
   
   // If LCP is longer than current input, complete to LCP (without space)
   if (lcp.length > line.length) {
-    lastCompletionInput = '';
+    lastCompletionInput = ''; // Reset for next completion
     return [[lcp], line];
   }
   
@@ -109,14 +239,13 @@ function completer(line) {
     process.stdout.write('\n' + hits.join('  ') + '\n');
     rl.prompt(true);
     lastCompletionInput = '';
+    return [[], line];
   } else {
     // First TAB - ring bell and save input
     process.stdout.write('\x07');
     lastCompletionInput = line;
+    return [[], line];
   }
-  
-  // Return empty to prevent readline's own formatting
-  return [[], line];
 }
 
 const rl = readline.createInterface({
@@ -163,6 +292,48 @@ function parseCommand(commandLine) {
       continue;
     }
     
+    // Handle variable interpolation (outside single quotes)
+    if (char === '$' && !inSingleQuote) {
+      // Check for $? (exit code)
+      if (i + 1 < commandLine.length && commandLine[i + 1] === '?') {
+        currentArg += String(lastExitCode);
+        i++; // Skip the ?
+      } else if (i + 1 < commandLine.length && commandLine[i + 1] === '{') {
+        // ${VAR} syntax
+        i += 2; // Skip ${ 
+        let varName = '';
+        while (i < commandLine.length && commandLine[i] !== '}') {
+          varName += commandLine[i];
+          i++;
+        }
+        // i is now at } or end of string
+        // Expand variable
+        if (varName === '?') {
+          // ${?} syntax for exit code
+          currentArg += String(lastExitCode);
+        } else {
+          const value = process.env[varName] || '';
+          currentArg += value;
+        }
+      } else if (i + 1 < commandLine.length) {
+        // $VAR syntax - read alphanumeric and underscore
+        i++; // Skip $
+        let varName = '';
+        while (i < commandLine.length && /[A-Za-z0-9_]/.test(commandLine[i])) {
+          varName += commandLine[i];
+          i++;
+        }
+        i--; // Back up one since loop will increment
+        // Expand variable
+        const value = process.env[varName] || '';
+        currentArg += value;
+      } else {
+        // Just $ at end of string
+        currentArg += char;
+      }
+      continue;
+    }
+    
     if (char === "'" && !inDoubleQuote) {
       // Toggle single quote (only if not in double quote)
       inSingleQuote = !inSingleQuote;
@@ -174,6 +345,38 @@ function parseCommand(commandLine) {
       if (currentArg.length > 0) {
         args.push(currentArg);
         currentArg = '';
+      }
+    } else if ((char === '<' || char === '>') && !inSingleQuote && !inDoubleQuote) {
+      // Redirection operator outside quotes - split as separate token
+      if (currentArg.length > 0) {
+        args.push(currentArg);
+        currentArg = '';
+      }
+      // Check for >> or 2>> or 1>> or 2>
+      if (char === '>') {
+        if (i + 1 < commandLine.length && commandLine[i + 1] === '>') {
+          // >> found
+          // Check if preceded by 1 or 2
+          if (args.length > 0 && (args[args.length - 1] === '1' || args[args.length - 1] === '2')) {
+            const num = args.pop();
+            args.push(num + '>>');
+          } else {
+            args.push('>>');
+          }
+          i++; // Skip the second >
+        } else {
+          // Single >
+          // Check if preceded by 1 or 2
+          if (args.length > 0 && (args[args.length - 1] === '1' || args[args.length - 1] === '2')) {
+            const num = args.pop();
+            args.push(num + '>');
+          } else {
+            args.push('>');
+          }
+        }
+      } else {
+        // < found
+        args.push('<');
       }
     } else {
       // Regular character or space inside quotes
@@ -191,6 +394,7 @@ function parseCommand(commandLine) {
   let outputAppend = false;
   let errorFile = null;
   let errorAppend = false;
+  let inputFile = null;
   const filteredArgs = [];
   
   for (let i = 0; i < args.length; i++) {
@@ -208,6 +412,12 @@ function parseCommand(commandLine) {
       if (i + 1 < args.length) {
         errorFile = args[i + 1];
         errorAppend = true;
+        i++; // Skip the filename
+      }
+    } else if (arg === '<') {
+      // stdin redirection
+      if (i + 1 < args.length) {
+        inputFile = args[i + 1];
         i++; // Skip the filename
       }
     } else if (arg.startsWith('1>>')) {
@@ -248,12 +458,15 @@ function parseCommand(commandLine) {
       // Handle ">file" (no space)
       outputFile = arg.slice(1);
       outputAppend = false;
+    } else if (arg.startsWith('<')) {
+      // Handle "<file" (no space)
+      inputFile = arg.slice(1);
     } else {
       filteredArgs.push(arg);
     }
   }
   
-  return { args: filteredArgs, outputFile, outputAppend, errorFile, errorAppend };
+  return { args: filteredArgs, outputFile, outputAppend, errorFile, errorAppend, inputFile };
 }
 
 // Helper function to find executable in PATH
@@ -261,53 +474,193 @@ function findExecutable(command) {
   const pathEnv = process.env.PATH || "";
   const directories = pathEnv.split(path.delimiter);
   
+  // On Windows, try both with and without .exe extension
+  const isWindows = process.platform === 'win32';
+  const extensions = isWindows ? ['', '.exe', '.cmd', '.bat', '.com'] : [''];
+  
   for (const dir of directories) {
-    const fullPath = path.join(dir, command);
-    
-    try {
-      // Check if file exists and has execute permissions
-      if (fs.existsSync(fullPath)) {
-        fs.accessSync(fullPath, fs.constants.X_OK);
-        return fullPath;
+    for (const ext of extensions) {
+      const fullPath = path.join(dir, command + ext);
+      
+      try {
+        // Check if file exists
+        if (fs.existsSync(fullPath)) {
+          // On Windows, just check if it exists (permissions work differently)
+          // On Unix, check execute permissions
+          if (isWindows) {
+            // On Windows, if it has executable extension or no extension, it's good
+            return fullPath;
+          } else {
+            // On Unix, check execute permissions
+            try {
+              fs.accessSync(fullPath, fs.constants.X_OK);
+              return fullPath;
+            } catch (err) {
+              continue;
+            }
+          }
+        }
+      } catch (err) {
+        // File doesn't exist or can't be accessed, continue to next
+        continue;
       }
-    } catch (err) {
-      // No execute permissions or other error, continue to next directory
-      continue;
     }
   }
   
   return null;
 }
 
-// Check if command is a builtin
-function isBuiltin(cmd) {
-  return BUILTIN_COMMANDS.includes(cmd);
+// Track command history
+const commandHistory = [];
+// Track the last index written to file (for history -a)
+let lastWrittenIndex = 0;
+
+// Track last exit code for $? variable
+let lastExitCode = 0;
+
+// Store command aliases
+const aliases = new Map();
+
+// Job control
+const jobs = [];
+let nextJobId = 1;
+
+// Job states
+const JOB_RUNNING = 'Running';
+const JOB_STOPPED = 'Stopped';
+const JOB_DONE = 'Done';
+
+// Add a job
+function addJob(command, process, isBackground) {
+  const job = {
+    id: nextJobId++,
+    command: command,
+    process: process,
+    pid: process.pid,
+    state: JOB_RUNNING,
+    background: isBackground
+  };
+  jobs.push(job);
+  return job;
 }
 
-// Execute builtin command and return output as string
-// This function is used by pipelines and internally, not by the main REPL
+// Remove completed jobs
+function cleanupJobs() {
+  for (let i = jobs.length - 1; i >= 0; i--) {
+    if (jobs[i].state === JOB_DONE) {
+      jobs.splice(i, 1);
+    }
+  }
+}
+
+// Get job by ID
+function getJob(jobId) {
+  return jobs.find(j => j.id === jobId);
+}
+
+// Update job states
+function updateJobStates() {
+  jobs.forEach(job => {
+    if (job.process && job.process.exitCode !== null) {
+      job.state = JOB_DONE;
+    }
+  });
+}
+
+// Execute commands from a file (for source builtin and profile loading)
+function executeFile(filePath) {
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    const lines = content.split('\n');
+    
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      // Skip empty lines and comments
+      if (!trimmedLine || trimmedLine.startsWith('#')) {
+        continue;
+      }
+      
+      // Execute the command (without adding to history)
+      // We'll process it directly here to avoid REPL recursion
+      executeCommand(trimmedLine, false);
+    }
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+// Execute a single command (helper for source and profile loading)
+function executeCommand(command, addToHistory = true) {
+  if (!command.trim()) return;
+  
+  // Add to history if requested
+  if (addToHistory && command.trim()) {
+    commandHistory.push(command);
+  }
+  
+  // Check for variable assignment (VAR=value)
+  const varAssignMatch = command.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+  if (varAssignMatch) {
+    const varName = varAssignMatch[1];
+    const varValue = varAssignMatch[2];
+    const parsed = parseCommand(varValue);
+    const expandedValue = parsed.args.join(' ');
+    process.env[varName] = expandedValue;
+    return;
+  }
+  
+  // Parse the command
+  const parsed = parseCommand(command);
+  const args = parsed.args;
+  
+  if (args.length === 0) return;
+  
+  const cmd = args[0];
+  const cmdArgs = args.slice(1);
+  
+  // Handle builtins that need special handling
+  if (cmd === 'cd') {
+    const dir = cmdArgs[0] === '~' ? process.env.HOME : cmdArgs[0];
+    try {
+      process.chdir(dir);
+    } catch (err) {
+      // Silently ignore errors in profile files
+    }
+  } else if (cmd === 'source' && cmdArgs[0]) {
+    executeFile(cmdArgs[0]);
+  } else if (isBuiltin(cmd)) {
+    // Execute other builtins
+    const result = executeBuiltin(cmd, cmdArgs);
+    if (result.output) {
+      process.stdout.write(result.output);
+    }
+  }
+  // For non-builtins in profile files, we skip them (don't execute external commands during profile load)
+}
+
+// Check if command is a builtin
+function isBuiltin(cmd) {
+  return ['echo', 'exit', 'type', 'pwd', 'cd', 'history', 'source', 'jobs', 'fg', 'bg', 'alias', 'unalias'].includes(cmd);
+}
+
+// Execute builtin command and return { exitCode, output }
 function executeBuiltin(cmd, cmdArgs) {
   if (cmd === 'echo') {
-    return cmdArgs.join(' ') + '\n';
+    return { exitCode: 0, output: cmdArgs.join(' ') + '\n' };
   } else if (cmd === 'pwd') {
-    return process.cwd() + '\n';
+    return { exitCode: 0, output: process.cwd() + '\n' };
   } else if (cmd === 'type') {
     const arg = cmdArgs[0];
-    const builtins = ['echo', 'exit', 'type', 'pwd', 'cd', 'history', 'source', 'jobs', 'fg', 'bg', 'alias', 'unalias'];
-    
-    // Check if it's an alias first
-    if (aliases.has(arg)) {
-      return { exitCode: 0, output: `${arg} is aliased to '${aliases.get(arg)}'\n` };
-    }
-    
+    const builtins = ['echo', 'exit', 'type', 'pwd', 'cd', 'history', 'source', 'jobs', 'fg', 'bg'];
     if (builtins.includes(arg)) {
       return { exitCode: 0, output: `${arg} is a shell builtin\n` };
     }
     const executablePath = findExecutable(arg);
     if (executablePath) {
-      return `${arg} is ${executablePath}\n`;
+      return { exitCode: 0, output: `${arg} is ${executablePath}\n` };
     }
-    return `${arg}: not found\n`;
+    return { exitCode: 1, output: `${arg}: not found\n` };
   } else if (cmd === 'history') {
     // Check for -r flag (read from file)
     if (cmdArgs[0] === '-r' && cmdArgs[1]) {
@@ -320,9 +673,9 @@ function executeBuiltin(cmd, cmdArgs) {
             commandHistory.push(line);
           }
         }
-        return '';
+        return { exitCode: 0, output: '' };
       } catch (err) {
-        return `history: ${filePath}: No such file or directory\n`;
+        return { exitCode: 1, output: `history: ${filePath}: No such file or directory\n` };
       }
     }
     
@@ -334,9 +687,9 @@ function executeBuiltin(cmd, cmdArgs) {
         const content = commandHistory.join('\n') + '\n';
         fs.writeFileSync(filePath, content, 'utf8');
         lastWrittenIndex = commandHistory.length;
-        return '';
+        return { exitCode: 0, output: '' };
       } catch (err) {
-        return `history: ${filePath}: cannot write history file\n`;
+        return { exitCode: 1, output: `history: ${filePath}: cannot write history file\n` };
       }
     }
     
@@ -351,9 +704,9 @@ function executeBuiltin(cmd, cmdArgs) {
           fs.appendFileSync(filePath, content, 'utf8');
           lastWrittenIndex = commandHistory.length;
         }
-        return '';
+        return { exitCode: 0, output: '' };
       } catch (err) {
-        return `history: ${filePath}: cannot append to history file\n`;
+        return { exitCode: 1, output: `history: ${filePath}: cannot append to history file\n` };
       }
     }
     
@@ -364,33 +717,149 @@ function executeBuiltin(cmd, cmdArgs) {
     for (let i = startIndex; i < commandHistory.length; i++) {
       result += `    ${i + 1}  ${commandHistory[i]}\n`;
     }
-    return result;
+    return { exitCode: 0, output: result };
   } else if (cmd === 'cd') {
     const dir = cmdArgs[0] === '~' ? process.env.HOME : cmdArgs[0];
     try {
       process.chdir(dir);
-      return '';
+      return { exitCode: 0, output: '' };
     } catch (err) {
-      return `cd: ${dir}: No such file or directory\n`;
+      return { exitCode: 1, output: `cd: ${dir}: No such file or directory\n` };
     }
+  } else if (cmd === 'source') {
+    if (!cmdArgs[0]) {
+      return { exitCode: 1, output: 'source: filename required\n' };
+    }
+    const filePath = cmdArgs[0].replace(/^~/, process.env.HOME || '');
+    const success = executeFile(filePath);
+    if (!success) {
+      return { exitCode: 1, output: `source: ${cmdArgs[0]}: No such file or directory\n` };
+    }
+    return { exitCode: 0, output: '' };
+  } else if (cmd === 'jobs') {
+    // Update job states first
+    updateJobStates();
+    
+    let result = '';
+    jobs.forEach(job => {
+      const sign = job.background ? '&' : '';
+      result += `[${job.id}]  ${job.state}  ${job.command}${sign}\n`;
+    });
+    return { exitCode: 0, output: result };
+  } else if (cmd === 'fg') {
+    // Bring job to foreground
+    const jobId = cmdArgs[0] ? parseInt(cmdArgs[0]) : jobs.length;
+    const job = getJob(jobId);
+    
+    if (!job) {
+      return { exitCode: 1, output: `fg: ${jobId}: no such job\n` };
+    }
+    
+    if (job.state === JOB_DONE) {
+      return { exitCode: 1, output: `fg: ${jobId}: job has terminated\n` };
+    }
+    
+    // Note: Full fg implementation requires process group management
+    // which is complex in Node.js. This is a basic implementation.
+    return { exitCode: 0, output: `[${job.id}]  ${job.command}\n` };
+  } else if (cmd === 'bg') {
+    // Continue job in background
+    const jobId = cmdArgs[0] ? parseInt(cmdArgs[0]) : jobs.length;
+    const job = getJob(jobId);
+    
+    if (!job) {
+      return { exitCode: 1, output: `bg: ${jobId}: no such job\n` };
+    }
+    
+    if (job.state === JOB_DONE) {
+      return { exitCode: 1, output: `bg: ${jobId}: job has terminated\n` };
+    }
+    
+    job.state = JOB_RUNNING;
+    job.background = true;
+    
+    // Note: Full bg implementation requires sending SIGCONT signal
+    // This is a basic implementation
+    return { exitCode: 0, output: `[${job.id}]  ${job.command} &\n` };
+  } else if (cmd === 'alias') {
+    // Handle alias builtin
+    if (cmdArgs.length === 0) {
+      // List all aliases
+      let result = '';
+      const sortedAliases = Array.from(aliases.entries()).sort();
+      for (const [name, value] of sortedAliases) {
+        result += `alias ${name}='${value}'\n`;
+      }
+      return { exitCode: 0, output: result };
+    }
+    
+    // Check if it's alias name='value' format
+    const fullArg = cmdArgs.join(' ');
+    const aliasMatch = fullArg.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    
+    if (aliasMatch) {
+      // Setting an alias
+      const name = aliasMatch[1];
+      let value = aliasMatch[2];
+      
+      // Remove surrounding quotes if present
+      if ((value.startsWith("'") && value.endsWith("'")) || 
+          (value.startsWith('"') && value.endsWith('"'))) {
+        value = value.slice(1, -1);
+      }
+      
+      aliases.set(name, value);
+      return { exitCode: 0, output: '' };
+    } else {
+      // Show specific alias(es)
+      let result = '';
+      let hasError = false;
+      for (const name of cmdArgs) {
+        if (aliases.has(name)) {
+          result += `alias ${name}='${aliases.get(name)}'\n`;
+        } else {
+          result += `alias: ${name}: not found\n`;
+          hasError = true;
+        }
+      }
+      return { exitCode: hasError ? 1 : 0, output: result };
+    }
+  } else if (cmd === 'unalias') {
+    // Handle unalias builtin
+    if (cmdArgs.length === 0) {
+      return { exitCode: 1, output: 'unalias: usage: unalias name [name ...]\n' };
+    }
+    
+    let hasError = false;
+    let result = '';
+    for (const name of cmdArgs) {
+      if (aliases.has(name)) {
+        aliases.delete(name);
+      } else {
+        result += `unalias: ${name}: not found\n`;
+        hasError = true;
+      }
+    }
+    return { exitCode: hasError ? 1 : 0, output: result };
   }
-  return '';
+  return { exitCode: 0, output: '' };
 }
 
 // Execute a pipeline of commands
 function executePipeline(commands) {
-  if (commands.length === 0) return false;
+  if (commands.length === 0) return;
   
   // Parse each command
   const parsedCommands = commands.map(cmd => parseCommand(cmd.trim()));
   
   if (parsedCommands.length === 1) {
-    // No pipeline, handle normally
+    // No pipeline, handle normally (this shouldn't happen here)
     return false;
   }
   
   // Create processes/streams for pipeline
   const processes = [];
+  const fdToClose = [];
   
   for (let i = 0; i < parsedCommands.length; i++) {
     const parsed = parsedCommands[i];
@@ -400,15 +869,16 @@ function executePipeline(commands) {
     // Check if builtin
     if (isBuiltin(cmd)) {
       // Execute builtin and get output
-      const output = executeBuiltin(cmd, cmdArgs);
+      const result = executeBuiltin(cmd, cmdArgs);
       
       // Create a readable stream from the output
-      const builtinStream = Readable.from([output]);
+      const builtinStream = Readable.from([result.output]);
       
       // Create a mock process object with streams
       const mockProc = {
         stdout: builtinStream,
         stdin: null,
+        exitCode: result.exitCode,
       };
       
       processes.push(mockProc);
@@ -425,14 +895,47 @@ function executePipeline(commands) {
         stdio: ['pipe', 'pipe', 'inherit'], // stdin, stdout, stderr
       };
       
-      // First command: inherit stdin
+      // First command: check for input redirection
       if (i === 0) {
-        spawnOptions.stdio[0] = 'inherit';
+        if (parsed.inputFile) {
+          try {
+            const inputFd = fs.openSync(parsed.inputFile, 'r');
+            spawnOptions.stdio[0] = inputFd;
+            fdToClose.push(inputFd);
+          } catch (err) {
+            console.log(`${cmd}: ${parsed.inputFile}: No such file or directory`);
+            return true;
+          }
+        } else {
+          spawnOptions.stdio[0] = 'inherit';
+        }
       }
       
-      // Last command: inherit stdout
+      // Last command: check for output/error redirection
       if (i === parsedCommands.length - 1) {
-        spawnOptions.stdio[1] = 'inherit';
+        if (parsed.outputFile) {
+          try {
+            const outputFd = fs.openSync(parsed.outputFile, parsed.outputAppend ? 'a' : 'w');
+            spawnOptions.stdio[1] = outputFd;
+            fdToClose.push(outputFd);
+          } catch (err) {
+            console.log(`${cmd}: ${parsed.outputFile}: ${err.message}`);
+            return true;
+          }
+        } else {
+          spawnOptions.stdio[1] = 'inherit';
+        }
+        
+        if (parsed.errorFile) {
+          try {
+            const errorFd = fs.openSync(parsed.errorFile, parsed.errorAppend ? 'a' : 'w');
+            spawnOptions.stdio[2] = errorFd;
+            fdToClose.push(errorFd);
+          } catch (err) {
+            console.log(`${cmd}: ${parsed.errorFile}: ${err.message}`);
+            return true;
+          }
+        }
       }
       
       const proc = spawn(executablePath, cmdArgs, spawnOptions);
@@ -444,6 +947,9 @@ function executePipeline(commands) {
   for (let i = 1; i < processes.length; i++) {
     if (processes[i - 1].stdout && processes[i].stdin) {
       processes[i - 1].stdout.pipe(processes[i].stdin);
+    } else if (processes[i - 1].stdout && !processes[i].stdin) {
+      // Previous has stdout, current doesn't have stdin (builtin)
+      // Do nothing - builtin doesn't read from stdin in our implementation
     }
   }
   
@@ -459,16 +965,49 @@ function executePipeline(commands) {
   // Wait for the last process/stream to finish
   if (lastProc.on) {
     // Real process
-    lastProc.on('close', () => {
+    lastProc.on('close', (code) => {
+      // Update last exit code from the last process in the pipeline
+      lastExitCode = code !== null ? code : 0;
+      
+      // Close any file descriptors that were opened
+      fdToClose.forEach(fd => {
+        try {
+          fs.closeSync(fd);
+        } catch (err) {
+          // Ignore errors when closing
+        }
+      });
       repl();
     });
   } else {
     // Builtin (mock process with stream)
     if (lastProc.stdout) {
       lastProc.stdout.on('end', () => {
+        // Update last exit code from builtin
+        lastExitCode = lastProc.exitCode || 0;
+        
+        // Close any file descriptors that were opened
+        fdToClose.forEach(fd => {
+          try {
+            fs.closeSync(fd);
+          } catch (err) {
+            // Ignore errors when closing
+          }
+        });
         repl();
       });
     } else {
+      // Update last exit code from builtin
+      lastExitCode = lastProc.exitCode || 0;
+      
+      // Close any file descriptors that were opened
+      fdToClose.forEach(fd => {
+        try {
+          fs.closeSync(fd);
+        } catch (err) {
+          // Ignore errors when closing
+        }
+      });
       repl();
     }
   }
@@ -476,77 +1015,15 @@ function executePipeline(commands) {
   return true;
 }
 
-// Expand aliases in command line (with recursion detection)
-function expandAliases(commandLine, expandedAliases = new Set()) {
-  // Parse to get the first word (command)
-  const trimmed = commandLine.trim();
-  if (!trimmed) return commandLine;
-  
-  // Find the first word (command name)
-  let firstWord = '';
-  let i = 0;
-  let inQuote = false;
-  let quoteChar = '';
-  
-  while (i < trimmed.length) {
-    const char = trimmed[i];
-    
-    if (!inQuote && (char === '"' || char === "'")) {
-      inQuote = true;
-      quoteChar = char;
-      i++;
-      continue;
-    }
-    
-    if (inQuote && char === quoteChar) {
-      inQuote = false;
-      quoteChar = '';
-      i++;
-      continue;
-    }
-    
-    if (!inQuote && (char === ' ' || char === '\t' || char === ';' || char === '|' || char === '&')) {
-      break;
-    }
-    
-    firstWord += char;
-    i++;
-  }
-  
-  // Check if the first word is an alias
-  if (!aliases.has(firstWord)) {
-    return commandLine;
-  }
-  
-  // Prevent recursive alias expansion
-  if (expandedAliases.has(firstWord)) {
-    return commandLine;
-  }
-  
-  // Get the alias value
-  const aliasValue = aliases.get(firstWord);
-  
-  // Replace the first word with the alias value
-  const restOfCommand = trimmed.substring(firstWord.length);
-  const expandedCommand = aliasValue + restOfCommand;
-  
-  // Mark this alias as expanded
-  const newExpandedAliases = new Set(expandedAliases);
-  newExpandedAliases.add(firstWord);
-  
-  // Recursively expand aliases in the result
-  return expandAliases(expandedCommand, newExpandedAliases);
-}
-
 function repl() {
-  rl.question("$ ", (command) => {
+rl.question("$ ", (command) => {
+    // Update job states at each prompt
+    updateJobStates();
+    
     // Add command to history (if not empty)
     if (command.trim()) {
       commandHistory.push(command);
     }
-    
-    // Expand aliases
-    command = expandAliases(command);
     
     // Check for semicolon-separated commands
     if (command.includes(';') && !command.match(/^[^'"]*;[^'"]*$/)) {
@@ -594,6 +1071,7 @@ function repl() {
     const outputAppend = parsed.outputAppend;
     const errorFile = parsed.errorFile;
     const errorAppend = parsed.errorAppend;
+    const inputFile = parsed.inputFile;
     
     if (args.length === 0) {
       repl();
@@ -603,48 +1081,144 @@ function repl() {
     const cmd = args[0];
     const cmdArgs = args.slice(1);
     
-    // Handle exit builtin (special case - must be in REPL, not in executeBuiltin)
+    // Handle exit builtin
     if (cmd === "exit") {
-      saveHistoryToFile();
+      // Save history to HISTFILE before exiting
+      if (process.env.HISTFILE) {
+        try {
+          const content = commandHistory.join('\n') + '\n';
+          fs.writeFileSync(process.env.HISTFILE, content, 'utf8');
+        } catch (err) {
+          // Silently ignore errors when saving history on exit
+        }
+      }
       process.exit(0);
     }
     
-    // Handle builtins that don't need special REPL treatment
-    if (isBuiltin(cmd)) {
-      // Execute the builtin
-      const output = executeBuiltin(cmd, cmdArgs);
-      
-      // Handle output redirection for builtins
+    // Helper function to write output (to file or console)
+    const writeOutput = (text) => {
       if (outputFile) {
-        const writeMode = outputAppend ? 'a' : 'w';
         try {
-          if (output.endsWith('\n')) {
-            fs.writeFileSync(outputFile, output, { encoding: 'utf8', flag: writeMode });
+          if (outputAppend) {
+            fs.appendFileSync(outputFile, text + '\n');
           } else {
-            fs.writeFileSync(outputFile, output + '\n', { encoding: 'utf8', flag: writeMode });
+            fs.writeFileSync(outputFile, text + '\n');
           }
         } catch (err) {
-          // Ignore write errors
+          console.error(`${cmd}: ${outputFile}: ${err.message}`);
         }
       } else {
-        // Print to console (remove trailing newline since print adds one)
-        if (output) {
-          process.stdout.write(output);
-        }
+        console.log(text);
       }
-      
-      // Handle error redirection for builtins (create empty file)
-      if (errorFile) {
-        const writeMode = errorAppend ? 'a' : 'w';
-        try {
-          if (!fs.existsSync(errorFile) || !errorAppend) {
-            fs.writeFileSync(errorFile, '', { encoding: 'utf8', flag: writeMode });
+    };
+    
+    // Create/append error file if specified (even if empty for builtins)
+    if (errorFile) {
+      try {
+        if (errorAppend) {
+          // Create if doesn't exist, don't modify if exists
+          if (!fs.existsSync(errorFile)) {
+            fs.writeFileSync(errorFile, '');
           }
-        } catch (err) {
-          // Ignore write errors
+        } else {
+          // Overwrite with empty
+          fs.writeFileSync(errorFile, '');
         }
+      } catch (err) {
+        console.error(`${cmd}: ${errorFile}: ${err.message}`);
       }
-      
+    }
+    
+    // Handle echo builtin
+    if (cmd === "echo") {
+      writeOutput(cmdArgs.join(" "));
+      lastExitCode = 0;
+      repl();
+      return;
+    }
+    
+    // Handle type builtin
+    if (cmd === "type") {
+      const result = executeBuiltin(cmd, cmdArgs);
+      const output = result.output.trim(); // Remove trailing newline for writeOutput
+      writeOutput(output);
+      lastExitCode = result.exitCode;
+      repl();
+      return;
+    }
+    
+    // Handle pwd builtin
+    if (cmd === "pwd") {
+      const result = executeBuiltin(cmd, cmdArgs);
+      const output = result.output.trim(); // Remove trailing newline for writeOutput
+      writeOutput(output);
+      lastExitCode = result.exitCode;
+      repl();
+      return;
+    }
+    
+    // Handle history builtin
+    if (cmd === "history") {
+      const result = executeBuiltin(cmd, cmdArgs);
+      if (result.output) {
+        process.stdout.write(result.output);
+      }
+      lastExitCode = result.exitCode;
+      repl();
+      return;
+    }
+    
+    // Handle cd builtin
+    if (cmd === "cd") {
+      const result = executeBuiltin(cmd, cmdArgs);
+      if (result.output) {
+        process.stdout.write(result.output);
+      }
+      lastExitCode = result.exitCode;
+      repl();
+      return;
+    }
+    
+    // Handle source builtin
+    if (cmd === "source") {
+      const result = executeBuiltin(cmd, cmdArgs);
+      if (result.output) {
+        process.stdout.write(result.output);
+      }
+      lastExitCode = result.exitCode;
+      repl();
+      return;
+    }
+    
+    // Handle jobs builtin
+    if (cmd === "jobs") {
+      const result = executeBuiltin(cmd, cmdArgs);
+      if (result.output) {
+        process.stdout.write(result.output);
+      }
+      lastExitCode = result.exitCode;
+      repl();
+      return;
+    }
+    
+    // Handle fg builtin
+    if (cmd === "fg") {
+      const result = executeBuiltin(cmd, cmdArgs);
+      if (result.output) {
+        process.stdout.write(result.output);
+      }
+      lastExitCode = result.exitCode;
+      repl();
+      return;
+    }
+    
+    // Handle bg builtin
+    if (cmd === "bg") {
+      const result = executeBuiltin(cmd, cmdArgs);
+      if (result.output) {
+        process.stdout.write(result.output);
+      }
+      lastExitCode = result.exitCode;
       repl();
       return;
     }
@@ -655,22 +1229,72 @@ function repl() {
       // Execute the external program
       const spawnOptions = {
         argv0: cmd, // Set argv[0] to program name, not full path
+        detached: isBackground, // Detach if background job
       };
       
       // Handle I/O redirection
-      if (outputFile || errorFile) {
-        const stdoutFd = outputFile ? fs.openSync(outputFile, outputAppend ? 'a' : 'w') : 'inherit';
-        const stderrFd = errorFile ? fs.openSync(errorFile, errorAppend ? 'a' : 'w') : 'inherit';
-        spawnOptions.stdio = ['inherit', stdoutFd, stderrFd]; // stdin, stdout, stderr
-        
-        spawnSync(executablePath, cmdArgs, spawnOptions);
-        
-        // Close file descriptors if they were opened
-        if (typeof stdoutFd === 'number') fs.closeSync(stdoutFd);
-        if (typeof stderrFd === 'number') fs.closeSync(stderrFd);
+      if (outputFile || errorFile || inputFile) {
+        try {
+          const stdinFd = inputFile ? fs.openSync(inputFile, 'r') : 'inherit';
+          const stdoutFd = outputFile ? fs.openSync(outputFile, outputAppend ? 'a' : 'w') : 'inherit';
+          const stderrFd = errorFile ? fs.openSync(errorFile, errorAppend ? 'a' : 'w') : 'inherit';
+          spawnOptions.stdio = [stdinFd, stdoutFd, stderrFd]; // stdin, stdout, stderr
+          
+          if (isBackground) {
+            // Spawn background process
+            const proc = spawn(executablePath, cmdArgs, spawnOptions);
+            const job = addJob(command, proc, true);
+            console.log(`[${job.id}] ${proc.pid}`);
+            
+            // Don't wait for background jobs
+            proc.unref();
+            
+            // Monitor job completion
+            proc.on('exit', () => {
+              job.state = JOB_DONE;
+            });
+            
+            // Close file descriptors
+            if (typeof stdinFd === 'number') fs.closeSync(stdinFd);
+            if (typeof stdoutFd === 'number') fs.closeSync(stdoutFd);
+            if (typeof stderrFd === 'number') fs.closeSync(stderrFd);
+          } else {
+            // Foreground execution
+            const result = spawnSync(executablePath, cmdArgs, spawnOptions);
+            lastExitCode = result.status !== null ? result.status : 1;
+            
+            // Close file descriptors if they were opened
+            if (typeof stdinFd === 'number') fs.closeSync(stdinFd);
+            if (typeof stdoutFd === 'number') fs.closeSync(stdoutFd);
+            if (typeof stderrFd === 'number') fs.closeSync(stderrFd);
+          }
+        } catch (err) {
+          console.error(`${cmd}: ${err.message}`);
+          lastExitCode = 1;
+        }
       } else {
-        spawnOptions.stdio = "inherit";
-        spawnSync(executablePath, cmdArgs, spawnOptions);
+        if (isBackground) {
+          // Background job without redirection
+          spawnOptions.stdio = "inherit";
+          const proc = spawn(executablePath, cmdArgs, spawnOptions);
+          const job = addJob(command, proc, true);
+          console.log(`[${job.id}] ${proc.pid}`);
+          
+          // Don't wait for background jobs
+          proc.unref();
+          
+          // Monitor job completion
+          proc.on('exit', () => {
+            job.state = JOB_DONE;
+          });
+          // Background jobs don't update lastExitCode immediately
+          lastExitCode = 0;
+        } else {
+          // Foreground execution
+          spawnOptions.stdio = "inherit";
+          const result = spawnSync(executablePath, cmdArgs, spawnOptions);
+          lastExitCode = result.status !== null ? result.status : 1;
+        }
       }
       
       repl();
@@ -679,7 +1303,8 @@ function repl() {
     
     // Command not found
     console.log(`${cmd}: command not found`);
-    repl();
+    lastExitCode = 127; // Command not found exit code
+    repl(); // Loop back to prompt for next command
   });
 }
 
@@ -753,10 +1378,7 @@ function executeCommandsSequentially(commands, index) {
     return;
   }
   
-  let command = commands[index];
-  
-  // Expand aliases
-  command = expandAliases(command);
+  const command = commands[index];
   
   // Check for background job (ends with &)
   let isBackground = command.trim().endsWith('&');
@@ -853,9 +1475,6 @@ function executeCommandsSequentially(commands, index) {
 // Execute a single command and return exit code
 function executeCommand(command) {
   if (!command.trim()) return 0;
-  
-  // Expand aliases
-  command = expandAliases(command);
   
   // Check for variable assignment (VAR=value)
   const varAssignMatch = command.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
