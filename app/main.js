@@ -1,3 +1,4 @@
+
 const readline = require("readline");
 const fs = require("fs");
 const path = require("path");
@@ -825,7 +826,13 @@ function executeBuiltin(cmd, cmdArgs) {
     return { exitCode: 0, output: process.cwd() + '\n' };
   } else if (cmd === 'type') {
     const arg = cmdArgs[0];
-    const builtins = ['echo', 'exit', 'type', 'pwd', 'cd', 'history', 'source', 'jobs', 'fg', 'bg'];
+    const builtins = ['echo', 'exit', 'type', 'pwd', 'cd', 'history', 'source', 'jobs', 'fg', 'bg', 'alias', 'unalias'];
+    
+    // Check if it's an alias first
+    if (aliases.has(arg)) {
+      return { exitCode: 0, output: `${arg} is aliased to '${aliases.get(arg)}'\n` };
+    }
+    
     if (builtins.includes(arg)) {
       return { exitCode: 0, output: `${arg} is a shell builtin\n` };
     }
@@ -1188,6 +1195,68 @@ function executePipeline(commands) {
   return true;
 }
 
+// Expand aliases in command line (with recursion detection)
+function expandAliases(commandLine, expandedAliases = new Set()) {
+  // Parse to get the first word (command)
+  const trimmed = commandLine.trim();
+  if (!trimmed) return commandLine;
+  
+  // Find the first word (command name)
+  let firstWord = '';
+  let i = 0;
+  let inQuote = false;
+  let quoteChar = '';
+  
+  while (i < trimmed.length) {
+    const char = trimmed[i];
+    
+    if (!inQuote && (char === '"' || char === "'")) {
+      inQuote = true;
+      quoteChar = char;
+      i++;
+      continue;
+    }
+    
+    if (inQuote && char === quoteChar) {
+      inQuote = false;
+      quoteChar = '';
+      i++;
+      continue;
+    }
+    
+    if (!inQuote && (char === ' ' || char === '\t' || char === ';' || char === '|' || char === '&')) {
+      break;
+    }
+    
+    firstWord += char;
+    i++;
+  }
+  
+  // Check if the first word is an alias
+  if (!aliases.has(firstWord)) {
+    return commandLine;
+  }
+  
+  // Prevent recursive alias expansion
+  if (expandedAliases.has(firstWord)) {
+    return commandLine;
+  }
+  
+  // Get the alias value
+  const aliasValue = aliases.get(firstWord);
+  
+  // Replace the first word with the alias value
+  const restOfCommand = trimmed.substring(firstWord.length);
+  const expandedCommand = aliasValue + restOfCommand;
+  
+  // Mark this alias as expanded
+  const newExpandedAliases = new Set(expandedAliases);
+  newExpandedAliases.add(firstWord);
+  
+  // Recursively expand aliases in the result
+  return expandAliases(expandedCommand, newExpandedAliases);
+}
+
 function repl() {
 rl.question("$ ", (command) => {
     // Update job states at each prompt
@@ -1200,6 +1269,9 @@ rl.question("$ ", (command) => {
     
     // Expand braces
     command = expandBracesInCommand(command);
+    
+    // Expand aliases
+    command = expandAliases(command);
     
     // Check for semicolon-separated commands
     if (command.includes(';') && !command.match(/^[^'"]*;[^'"]*$/)) {
@@ -1581,6 +1653,9 @@ function executeCommandsSequentially(commands, index) {
   // Expand braces
   command = expandBracesInCommand(command);
   
+  // Expand aliases
+  command = expandAliases(command);
+  
   // Check for background job (ends with &)
   let isBackground = command.trim().endsWith('&');
   let cleanCommand = isBackground ? command.trim().slice(0, -1).trim() : command;
@@ -1679,6 +1754,9 @@ function executeCommand(command) {
   
   // Expand braces
   command = expandBracesInCommand(command);
+  
+  // Expand aliases
+  command = expandAliases(command);
   
   // Check for variable assignment (VAR=value)
   const varAssignMatch = command.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
