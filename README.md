@@ -47,16 +47,8 @@ node app/main.js script.sh
 ./your_program.sh
 ```
 
-### Try the GUI Demo
-Open `gui-terminal.html` in your web browser for an interactive demo interface with:
-- Dark-themed terminal UI
-- Feature showcase
-- Click-to-copy example commands
-- Help and documentation
-
 ## 📖 Documentation
 
-- **[VIDEO_DEMO_GUIDE.md](VIDEO_DEMO_GUIDE.md)** - Complete guide for creating demo videos
 - **[FEATURE_TESTING_CHECKLIST.md](FEATURE_TESTING_CHECKLIST.md)** - Comprehensive testing checklist (150+ tests)
 - **[test_aliases.txt](test_aliases.txt)** - Alias feature examples
 - **[test_braces.txt](test_braces.txt)** - Brace expansion examples
@@ -196,15 +188,6 @@ node app/main.js test_alias_script.sh
 ### Full Testing
 See [FEATURE_TESTING_CHECKLIST.md](FEATURE_TESTING_CHECKLIST.md) for comprehensive testing guide with 150+ test cases.
 
-## 🎬 Creating Demo Videos
-
-See [VIDEO_DEMO_GUIDE.md](VIDEO_DEMO_GUIDE.md) for:
-- Complete demonstration script
-- Recording tips and best practices
-- Feature-by-feature walkthrough
-- Timeline suggestions (5, 15, or 30 minutes)
-- Narration templates
-
 ## 🏗️ Architecture
 
 ### Main Components
@@ -263,8 +246,6 @@ Ensure you're using Git Bash or have proper PATH configuration. The shell suppor
 codecrafters-shell-javascript/
 ├── app/
 │   └── main.js                 # Main shell implementation (1800+ lines)
-├── gui-terminal.html           # Interactive GUI demo
-├── VIDEO_DEMO_GUIDE.md         # Video creation guide
 ├── FEATURE_TESTING_CHECKLIST.md# Testing checklist
 ├── test_aliases.txt            # Alias examples
 ├── test_braces.txt             # Brace expansion examples
