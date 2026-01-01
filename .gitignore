@@ -1,2 +1,3 @@
 node_modules/
-progress.md
+*.md
+!README.md
