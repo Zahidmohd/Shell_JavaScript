@@ -1,0 +1,63 @@
+# Test commands for alias functionality
+# Copy and paste these into the shell REPL
+
+# Test 1: Create a simple alias
+alias ll='ls -la'
+
+# Test 2: List all aliases
+alias
+
+# Test 3: Show specific alias
+alias ll
+
+# Test 4: Use the alias
+ll
+
+# Test 5: Create more aliases
+alias p='pwd'
+alias e='echo'
+
+# Test 6: Use aliases
+p
+e "Hello from alias"
+
+# Test 7: Alias with parameters
+alias greet='echo Hello'
+greet World
+
+# Test 8: Check type of alias
+type ll
+type p
+type echo
+
+# Test 9: Alias that references another command
+alias mycat='cat'
+
+# Test 10: Recursive alias (should not cause infinite loop)
+alias recurse='recurse echo safe'
+# Don't actually run this, it demonstrates recursion prevention
+
+# Test 11: Remove an alias
+unalias ll
+alias
+
+# Test 12: Try to remove non-existent alias
+unalias nonexistent
+
+# Test 13: Remove multiple aliases
+unalias p e
+
+# Test 14: Alias in script with semicolons
+alias test1='echo First'; alias test2='echo Second'
+test1; test2
+
+# Test 15: Complex alias
+alias status='echo "Current directory:"; pwd; echo "Exit code: $?"'
+status
+
+# Test 16: List remaining aliases
+alias
+
+# Test 17: Clean up
+unalias mycat greet test1 test2 status
+

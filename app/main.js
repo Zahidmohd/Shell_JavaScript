@@ -293,8 +293,15 @@ function executeBuiltin(cmd, cmdArgs) {
     return process.cwd() + '\n';
   } else if (cmd === 'type') {
     const arg = cmdArgs[0];
-    if (BUILTIN_COMMANDS.includes(arg)) {
-      return `${arg} is a shell builtin\n`;
+    const builtins = ['echo', 'exit', 'type', 'pwd', 'cd', 'history', 'source', 'jobs', 'fg', 'bg', 'alias', 'unalias'];
+    
+    // Check if it's an alias first
+    if (aliases.has(arg)) {
+      return { exitCode: 0, output: `${arg} is aliased to '${aliases.get(arg)}'\n` };
+    }
+    
+    if (builtins.includes(arg)) {
+      return { exitCode: 0, output: `${arg} is a shell builtin\n` };
     }
     const executablePath = findExecutable(arg);
     if (executablePath) {
@@ -469,24 +476,107 @@ function executePipeline(commands) {
   return true;
 }
 
-// Save history to HISTFILE
-function saveHistoryToFile() {
-  if (process.env.HISTFILE) {
-    try {
-      const content = commandHistory.join('\n') + '\n';
-      fs.writeFileSync(process.env.HISTFILE, content, 'utf8');
-    } catch (err) {
-      // Silently ignore errors when saving history
+// Expand aliases in command line (with recursion detection)
+function expandAliases(commandLine, expandedAliases = new Set()) {
+  // Parse to get the first word (command)
+  const trimmed = commandLine.trim();
+  if (!trimmed) return commandLine;
+  
+  // Find the first word (command name)
+  let firstWord = '';
+  let i = 0;
+  let inQuote = false;
+  let quoteChar = '';
+  
+  while (i < trimmed.length) {
+    const char = trimmed[i];
+    
+    if (!inQuote && (char === '"' || char === "'")) {
+      inQuote = true;
+      quoteChar = char;
+      i++;
+      continue;
     }
+    
+    if (inQuote && char === quoteChar) {
+      inQuote = false;
+      quoteChar = '';
+      i++;
+      continue;
+    }
+    
+    if (!inQuote && (char === ' ' || char === '\t' || char === ';' || char === '|' || char === '&')) {
+      break;
+    }
+    
+    firstWord += char;
+    i++;
   }
+  
+  // Check if the first word is an alias
+  if (!aliases.has(firstWord)) {
+    return commandLine;
+  }
+  
+  // Prevent recursive alias expansion
+  if (expandedAliases.has(firstWord)) {
+    return commandLine;
+  }
+  
+  // Get the alias value
+  const aliasValue = aliases.get(firstWord);
+  
+  // Replace the first word with the alias value
+  const restOfCommand = trimmed.substring(firstWord.length);
+  const expandedCommand = aliasValue + restOfCommand;
+  
+  // Mark this alias as expanded
+  const newExpandedAliases = new Set(expandedAliases);
+  newExpandedAliases.add(firstWord);
+  
+  // Recursively expand aliases in the result
+  return expandAliases(expandedCommand, newExpandedAliases);
 }
 
-// Main REPL function
 function repl() {
   rl.question("$ ", (command) => {
     // Add command to history (if not empty)
     if (command.trim()) {
       commandHistory.push(command);
+    }
+    
+    // Expand aliases
+    command = expandAliases(command);
+    
+    // Check for semicolon-separated commands
+    if (command.includes(';') && !command.match(/^[^'"]*;[^'"]*$/)) {
+      // Has semicolon, need to check if it's outside quotes
+      const commands = splitBySemicolon(command);
+      if (commands.length > 1) {
+        // Execute each command sequentially
+        executeCommandsSequentially(commands, 0);
+        return;
+      }
+    }
+    
+    // Check for background job (ends with &)
+    const isBackground = command.trim().endsWith('&');
+    if (isBackground) {
+      command = command.trim().slice(0, -1).trim(); // Remove & from command
+    }
+    
+    // Check for variable assignment (VAR=value)
+    const varAssignMatch = command.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (varAssignMatch) {
+      const varName = varAssignMatch[1];
+      const varValue = varAssignMatch[2];
+      // Parse the value to handle quotes and variables
+      const parsed = parseCommand(varValue);
+      const expandedValue = parsed.args.join(' ');
+      process.env[varName] = expandedValue;
+      lastExitCode = 0; // Variable assignment succeeds
+      repl();
+      return;
     }
     
     // Check for pipeline
@@ -610,5 +700,338 @@ if (process.env.HISTFILE) {
   }
 }
 
-// Start the REPL
-repl();
+// Split command line by semicolons (respecting quotes)
+function splitBySemicolon(commandLine) {
+  const commands = [];
+  let currentCommand = '';
+  let inSingleQuote = false;
+  let inDoubleQuote = false;
+  let escaped = false;
+  
+  for (let i = 0; i < commandLine.length; i++) {
+    const char = commandLine[i];
+    
+    if (escaped) {
+      currentCommand += char;
+      escaped = false;
+      continue;
+    }
+    
+    if (char === '\\' && !inSingleQuote) {
+      escaped = true;
+      currentCommand += char;
+      continue;
+    }
+    
+    if (char === "'" && !inDoubleQuote) {
+      inSingleQuote = !inSingleQuote;
+      currentCommand += char;
+    } else if (char === '"' && !inSingleQuote) {
+      inDoubleQuote = !inDoubleQuote;
+      currentCommand += char;
+    } else if (char === ';' && !inSingleQuote && !inDoubleQuote) {
+      if (currentCommand.trim()) {
+        commands.push(currentCommand.trim());
+      }
+      currentCommand = '';
+    } else {
+      currentCommand += char;
+    }
+  }
+  
+  if (currentCommand.trim()) {
+    commands.push(currentCommand.trim());
+  }
+  
+  return commands;
+}
+
+// Execute multiple commands sequentially (for REPL with semicolons)
+function executeCommandsSequentially(commands, index) {
+  if (index >= commands.length) {
+    repl();
+    return;
+  }
+  
+  let command = commands[index];
+  
+  // Expand aliases
+  command = expandAliases(command);
+  
+  // Check for background job (ends with &)
+  let isBackground = command.trim().endsWith('&');
+  let cleanCommand = isBackground ? command.trim().slice(0, -1).trim() : command;
+  
+  // Check for variable assignment (VAR=value)
+  const varAssignMatch = cleanCommand.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+  if (varAssignMatch) {
+    const varName = varAssignMatch[1];
+    const varValue = varAssignMatch[2];
+    const parsed = parseCommand(varValue);
+    const expandedValue = parsed.args.join(' ');
+    process.env[varName] = expandedValue;
+    lastExitCode = 0;
+    executeCommandsSequentially(commands, index + 1);
+    return;
+  }
+  
+  // Check for pipeline
+  if (cleanCommand.includes('|')) {
+    const pipeCommands = cleanCommand.split('|');
+    if (executePipeline(pipeCommands)) {
+      // Pipeline is async, so we need to modify executePipeline to call callback
+      // For now, skip to next command after a short delay (not ideal but works)
+      setTimeout(() => executeCommandsSequentially(commands, index + 1), 100);
+      return;
+    }
+  }
+  
+  // Parse the command
+  const parsed = parseCommand(cleanCommand);
+  const args = parsed.args;
+  
+  if (args.length === 0) {
+    executeCommandsSequentially(commands, index + 1);
+    return;
+  }
+  
+  const cmd = args[0];
+  const cmdArgs = args.slice(1);
+  
+  // Handle exit
+  if (cmd === 'exit') {
+    if (process.env.HISTFILE) {
+      try {
+        const content = commandHistory.join('\n') + '\n';
+        fs.writeFileSync(process.env.HISTFILE, content, 'utf8');
+      } catch (err) {
+        // Ignore
+      }
+    }
+    process.exit(0);
+  }
+  
+  // Execute builtin or external command
+  if (isBuiltin(cmd)) {
+    const result = executeBuiltin(cmd, cmdArgs);
+    if (result.output) {
+      process.stdout.write(result.output);
+    }
+    lastExitCode = result.exitCode;
+    executeCommandsSequentially(commands, index + 1);
+  } else {
+    // External command
+    const executablePath = findExecutable(cmd);
+    if (executablePath) {
+      const spawnOptions = {
+        argv0: cmd,
+        stdio: 'inherit',
+      };
+      
+      if (isBackground) {
+        const proc = spawn(executablePath, cmdArgs, spawnOptions);
+        const job = addJob(cleanCommand, proc, true);
+        console.log(`[${job.id}] ${proc.pid}`);
+        proc.unref();
+        proc.on('exit', () => {
+          job.state = JOB_DONE;
+        });
+        lastExitCode = 0;
+      } else {
+        const result = spawnSync(executablePath, cmdArgs, spawnOptions);
+        lastExitCode = result.status !== null ? result.status : 1;
+      }
+      executeCommandsSequentially(commands, index + 1);
+    } else {
+      console.log(`${cmd}: command not found`);
+      lastExitCode = 127;
+      executeCommandsSequentially(commands, index + 1);
+    }
+  }
+}
+
+// Execute a single command and return exit code
+function executeCommand(command) {
+  if (!command.trim()) return 0;
+  
+  // Expand aliases
+  command = expandAliases(command);
+  
+  // Check for variable assignment (VAR=value)
+  const varAssignMatch = command.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+  if (varAssignMatch) {
+    const varName = varAssignMatch[1];
+    const varValue = varAssignMatch[2];
+    const parsed = parseCommand(varValue);
+    const expandedValue = parsed.args.join(' ');
+    process.env[varName] = expandedValue;
+    return 0;
+  }
+  
+  // Check for pipeline
+  if (command.includes('|')) {
+    const commands = command.split('|');
+    // For scripts, we need to execute pipeline synchronously
+    // This is a simplified version - full implementation would need refactoring
+    return executePipelineSync(commands);
+  }
+  
+  // Parse the command
+  const parsed = parseCommand(command);
+  const args = parsed.args;
+  const outputFile = parsed.outputFile;
+  const outputAppend = parsed.outputAppend;
+  const errorFile = parsed.errorFile;
+  const errorAppend = parsed.errorAppend;
+  const inputFile = parsed.inputFile;
+  
+  if (args.length === 0) return 0;
+  
+  const cmd = args[0];
+  const cmdArgs = args.slice(1);
+  
+  // Handle exit specially - should terminate the script
+  if (cmd === 'exit') {
+    const exitCode = cmdArgs[0] ? parseInt(cmdArgs[0]) : 0;
+    process.exit(exitCode);
+  }
+  
+  // Handle builtins
+  if (isBuiltin(cmd)) {
+    const result = executeBuiltin(cmd, cmdArgs);
+    
+    // Handle output redirection for builtins
+    if (outputFile) {
+      try {
+        if (outputAppend) {
+          fs.appendFileSync(outputFile, result.output);
+        } else {
+          fs.writeFileSync(outputFile, result.output);
+        }
+      } catch (err) {
+        process.stderr.write(`${cmd}: ${outputFile}: ${err.message}\n`);
+        return 1;
+      }
+    } else {
+      process.stdout.write(result.output);
+    }
+    
+    return result.exitCode;
+  }
+  
+  // Try to execute as external program
+  const executablePath = findExecutable(cmd);
+  if (executablePath) {
+    const spawnOptions = {
+      argv0: cmd,
+    };
+    
+    // Handle I/O redirection
+    if (outputFile || errorFile || inputFile) {
+      try {
+        const stdinFd = inputFile ? fs.openSync(inputFile, 'r') : 'inherit';
+        const stdoutFd = outputFile ? fs.openSync(outputFile, outputAppend ? 'a' : 'w') : 'inherit';
+        const stderrFd = errorFile ? fs.openSync(errorFile, errorAppend ? 'a' : 'w') : 'inherit';
+        spawnOptions.stdio = [stdinFd, stdoutFd, stderrFd];
+        
+        const result = spawnSync(executablePath, cmdArgs, spawnOptions);
+        
+        if (typeof stdinFd === 'number') fs.closeSync(stdinFd);
+        if (typeof stdoutFd === 'number') fs.closeSync(stdoutFd);
+        if (typeof stderrFd === 'number') fs.closeSync(stderrFd);
+        
+        return result.status !== null ? result.status : 1;
+      } catch (err) {
+        process.stderr.write(`${cmd}: ${err.message}\n`);
+        return 1;
+      }
+    } else {
+      spawnOptions.stdio = 'inherit';
+      const result = spawnSync(executablePath, cmdArgs, spawnOptions);
+      return result.status !== null ? result.status : 1;
+    }
+  }
+  
+  // Command not found
+  process.stderr.write(`${cmd}: command not found\n`);
+  return 127;
+}
+
+// Execute pipeline synchronously (for scripts)
+function executePipelineSync(commands) {
+  // Simplified pipeline execution - just execute last command for now
+  // Full implementation would require piping between commands
+  if (commands.length === 0) return 0;
+  
+  const lastCommand = commands[commands.length - 1].trim();
+  return executeCommand(lastCommand);
+}
+
+// Execute a script file
+function executeScriptFile(scriptPath) {
+  try {
+    const content = fs.readFileSync(scriptPath, 'utf8');
+    const lines = content.split('\n');
+    
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      
+      // Skip empty lines and comments
+      if (!trimmedLine || trimmedLine.startsWith('#')) {
+        continue;
+      }
+      
+      // Split by semicolons
+      const commands = splitBySemicolon(trimmedLine);
+      
+      for (const command of commands) {
+        const exitCode = executeCommand(command);
+        lastExitCode = exitCode;
+        
+        // If command failed and we want to stop on error, we could do that here
+        // For now, continue executing all commands like bash does by default
+      }
+    }
+    
+    // Exit with the last command's exit code
+    process.exit(lastExitCode);
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      process.stderr.write(`${scriptPath}: No such file or directory\n`);
+    } else {
+      process.stderr.write(`${scriptPath}: ${err.message}\n`);
+    }
+    process.exit(1);
+  }
+}
+
+// Load profile files on startup
+function loadProfileFiles() {
+  const homeDir = process.env.HOME;
+  if (!homeDir) return;
+  
+  // Try loading profile files in order
+  const profileFiles = [
+    path.join(homeDir, '.shellrc'),
+    path.join(homeDir, '.profile'),
+  ];
+  
+  for (const profileFile of profileFiles) {
+    if (fs.existsSync(profileFile)) {
+      executeFile(profileFile);
+      break; // Only load first found profile file
+    }
+  }
+}
+
+loadProfileFiles();
+
+// Check if a script file is provided as an argument
+const scriptFile = process.argv[2];
+if (scriptFile) {
+  // Execute the script file
+  executeScriptFile(scriptFile);
+} else {
+  // Start the REPL
+  repl();
+}
